@@ -1,0 +1,2288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>3D SW</title>
+    <link rel="icon" type="image/png" href="https://vgrcanada.org/games/3DSW/favicon-96x96.png" sizes="96x96" />
+    <link rel="icon" type="image/svg+xml" href="https://vgrcanada.org/games/3DSW/favicon.svg" />
+    <link rel="shortcut icon" href="https://vgrcanada.org/games/3DSW/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="https://vgrcanada.org/games/3DSW/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-title" content="3D SW" />
+    <link rel="manifest" href="view-source:https://vgrcanada.org/games/3DSW/site.webmanifest" />
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #050e14;
+        }
+        canvas {
+            display: block;
+        }
+        /* Menu hamburger */
+        .hamburger-menu {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1000;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .hamburger-btn {
+            width: 40px;
+            height: 40px;
+            background: rgba(255, 255, 255, 0.9);
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            gap: 4px;
+            transition: all 0.3s ease;
+        }
+        .hamburger-btn:hover {
+            background: rgba(255, 255, 255, 1);
+            transform: scale(1.05);
+        }
+        .hamburger-line {
+            width: 24px;
+            height: 3px;
+            background: #333;
+            border-radius: 2px;
+            transition: all 0.3s ease;
+        }
+        .fullscreen-btn {
+            width: 40px;
+            height: 40px;
+            background: rgba(255, 255, 255, 0.9);
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: all 0.3s ease;
+            font-size: 20px;
+            color: #333;
+        }
+        .fullscreen-btn:hover {
+            background: rgba(255, 255, 255, 1);
+            transform: scale(1.05);
+        }
+        .menu-dropdown {
+            position: absolute;
+            top: 50px;
+            right: 0;
+            background: rgba(255, 255, 255, 0.95);
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            min-width: 200px;
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(-10px);
+            transition: all 0.3s ease;
+        }
+        .menu-dropdown.active {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+        .menu-item {
+            padding: 12px 20px;
+            cursor: pointer;
+            border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+            transition: background 0.2s ease;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+        }
+        .menu-item:hover {
+            background: rgba(0, 0, 0, 0.05);
+        }
+        .menu-item:last-child {
+            border-bottom: none;
+        }
+        .menu-item.active {
+            background: rgba(0, 123, 255, 0.1);
+            color: #007bff;
+            font-weight: bold;
+        }
+        /* Contrôles mobiles */
+        .mobile-controls {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            z-index: 999;
+            display: none;
+            gap: 20px;
+            align-items: flex-end;
+            justify-content: space-between;
+            pointer-events: none;
+        }
+        .mobile-controls.active {
+            display: flex;
+        }
+        .joystick-base {
+            position: relative;
+            width: 140px;
+            height: 140px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            touch-action: none;
+            pointer-events: auto;
+        }
+        .joystick-knob {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 60px;
+            height: 60px;
+            background: rgba(255, 255, 255, 0.6);
+            border-radius: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.3);
+        }
+        .right-controls {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 20px;
+            pointer-events: none;
+        }
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            flex-direction: row;
+        }
+        .action-btn {
+            pointer-events: auto;
+            width: 60px;
+            height: 60px;
+            background: rgba(255, 255, 255, 0.8);
+            border: 2px solid rgba(0, 0, 0, 0.3);
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s ease;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        .action-btn:active {
+            background: rgba(255, 255, 255, 1);
+            transform: scale(0.95);
+        }
+        .-btnrun {
+            background: rgba(255, 200, 0, 0.8);
+        }
+        .jump-btn {
+            background: rgba(0, 200, 255, 0.8);
+        }
+        .camera-btn {
+            background: rgba(128, 0, 128, 0.8);
+            font-size: 20px;
+        }
+        /* Fishing UI styles */
+        .fishing-banner {
+            position: fixed;
+            bottom: 120px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: linear-gradient(135deg, rgba(255,255,255,0.06), rgba(255,255,255,0.02));
+            color: #fff;
+            padding: 10px 18px;
+            border-radius: 12px;
+            backdrop-filter: blur(6px) saturate(1.2);
+            border: 1px solid rgba(255,255,255,0.06);
+            display: none;
+            z-index: 1200;
+            font-family: Arial, sans-serif;
+        }
+        .aim-reticle {
+            position: fixed;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 1100;
+            display: none;
+        }
+        .aim-reticle .outer {
+            width: 100%;
+            height: 100%;
+            border: 2px solid rgba(255,255,255,0.08);
+            box-shadow: 0 0 24px rgba(255,0,60,0.06), inset 0 0 8px rgba(255,255,255,0.02);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            
+        }
+        .aim-reticle .dot {
+            width: 8px;
+            height: 8px;
+            background: #ffffff;
+            border-radius: 50%;
+            box-shadow: 0 0 12px #ffffff;
+        }
+        .fishing-hud {
+            position: fixed;
+            left: 20px;
+            top: 80px;
+            width: 220px;
+            z-index: 950;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            display: none;
+            gap: 12px;
+        }
+        .fishing-hud .panel {
+            background: linear-gradient(180deg, rgba(0, 0, 0, 0.363), rgba(0, 0, 0, 0.144));
+            border-radius: 12px;
+            padding: 12px;
+            border: 1px solid rgba(255,255,255,0.05);
+            backdrop-filter: blur(8px);
+        }
+        .fishing-notification {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.78);
+            color: #fff;
+            padding: 14px 18px;
+            border-radius: 14px;
+            border: 1px solid rgba(255,255,255,0.12);
+            z-index: 1220;
+            display: none;
+            font-family: Arial, sans-serif;
+            pointer-events: none;
+        }
+        .fishing-notification.active {
+            display: block;
+        }
+        .catch-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(4, 8, 16, 0.92);
+            z-index: 1400;
+            align-items: center;
+            justify-content: center;
+            padding: 12px;
+            overflow-y: auto;
+            box-sizing: border-box;
+        }
+        .catch-panel {
+            width: min(520px, 95%);
+            background: linear-gradient(180deg, rgba(8, 16, 28, 0.96), rgba(12, 24, 40, 0.98));
+            border-radius: 18px;
+            border: 1px solid rgba(255,255,255,0.08);
+            box-shadow: 0 18px 60px rgba(0,0,0,0.45);
+            padding: 28px;
+            color: #fff;
+            text-align: center;
+            font-family: Arial, sans-serif;
+            margin: auto;
+        }
+        .catch-panel h2 {
+            margin: 0 0 10px;
+            font-size: 28px;
+        }
+        .catch-panel .stat {
+            margin: 10px 0;
+            font-size: 16px;
+            opacity: 0.9;
+        }
+        .catch-panel .stat strong {
+            color: #dde7ff;
+        }
+        .catch-panel button {
+            margin-top: 18px;
+            min-width: 120px;
+            min-height: 44px;
+            border-radius: 12px;
+            border: none;
+            background: #3b82f6;
+            color: #fff;
+            font-weight: bold;
+            cursor: pointer;
+        }
+        @media (max-height: 580px) {
+            .catch-panel {
+                padding: 14px 20px;
+                border-radius: 12px;
+            }
+            .catch-panel h2 {
+                font-size: 20px;
+                margin-bottom: 6px;
+            }
+            #caughtFishImage {
+                width: 120px !important;
+                height: 120px !important;
+            }
+            #caughtFishImageContainer {
+                margin-bottom: 8px !important;
+            }
+            .catch-panel .stat {
+                margin: 4px 0;
+                font-size: 13px;
+            }
+            .catch-panel button {
+                margin-top: 10px;
+                min-height: 38px;
+            }
+        }
+        .fishing-btn {
+            pointer-events: auto;
+            min-width: 84px;
+            min-height: 48px;
+            font-weight: bold;
+            border-radius: 10px;
+            background: linear-gradient(180deg,#ff6b6b,#ff2d55);
+            color: #fff;
+            border: none;
+            box-shadow: 0 6px 18px rgba(0,0,0,0.35);
+        }
+    </style>
+</head>
+<body>
+    <!-- Menu hamburger -->
+    <div class="hamburger-menu">
+        <button class="hamburger-btn" id="hamburgerBtn">
+            <div class="hamburger-line"></div>
+            <div class="hamburger-line"></div>
+            <div class="hamburger-line"></div>
+        </button>
+        <button class="fullscreen-btn" id="fullscreenBtn" title="Toggle Fullscreen">⛶</button>
+
+        <div class="menu-dropdown" id="menuDropdown">
+            <div class="menu-item" id="capsuleMode">Mode Capsule</div>
+            <div class="menu-item" id="jetskiMode">JetSki</div>
+            <div class="menu-item" id="fishingTrophies">Fishing trophies / Trophées</div>
+        </div>
+    </div>
+    <!-- Contrôles mobiles -->
+    <div class="mobile-controls" id="mobileControls">
+        <div id="joystickLeft" class="joystick-base">
+            <div id="joystickLeftKnob" class="joystick-knob"></div>
+        </div>
+        <div class="right-controls">
+            <div class="action-buttons">
+                <button class="action-btn action-btn-vehicle" data-action="vehicleAction"
+                    style="display: none; background: rgba(220, 38, 38, 0.95); color: #fff;">ENTRER UTV</button>
+                <button class="action-btn run-btn" data-action="run">COURIR</button>
+                <button class="action-btn jump-btn" data-action="jump">SAUT</button>
+                <button class="action-btn camera-btn" id="cameraToggleBtn">📷</button>
+                <button class="action-btn fishing-btn fish-btn" id="fishBtn" style="display:none; background: linear-gradient(180deg,#7cc6ff,#3b82f6); color:#111;">🎣 FISH</button>
+                <button class="action-btn fishing-btn stop-fishing-btn" id="stopFishingBtn" style="display:none; background: rgba(220, 38, 38, 0.95); color: #fff;">QUITTER</button>
+                <button class="action-btn fishing-btn strike-btn" id="strikeBtn" style="display:none; background: linear-gradient(180deg,#ffb84d,#ff8a00); color:#111;">STRIKE</button>
+                <button class="action-btn fishing-btn reel-btn" id="reelBtn" style="display:none; background: linear-gradient(180deg,#4dd0e1,#00bcd4); color:#111;">REEL</button>
+            </div>
+            <div id="joystickRight" class="joystick-base">
+                <div id="joystickRightKnob" class="joystick-knob"></div>
+            </div>
+        </div>
+    </div>
+    <!-- Fishing UI overlays -->
+    <div class="fishing-banner" id="fishingBanner">🎣 Fishing nearby — Press [R] to pull your Fishing Rod</div>
+    <div class="aim-reticle" id="aimReticle">
+        <div class="outer"><div class="dot"></div></div>
+    </div>
+    <div class="fishing-hud" id="fishingHUD">
+        <div class="panel">
+            <div style="font-size:12px;opacity:0.9">State: <span id="fishingState">idle</span></div>
+            <div style="margin-top:8px">Distance: <span id="fishingDistance">0m</span></div>
+            <div style="margin-top:8px">Tension: <progress id="fishingTension" value="0" max="100" style="width:100%"></progress></div>
+        </div>
+    </div>
+    <div class="fishing-notification" id="fishingNotification"></div>
+    <div class="catch-overlay" id="fishingCatchOverlay">
+        <div class="catch-panel">
+            <h2>Fish Caught!</h2>
+            <div id="caughtFishImageContainer" style="display:none; justify-content:center; margin-bottom:16px;">
+                <img id="caughtFishImage" style="width:200px; height:200px; object-fit:contain; border-radius:8px; border:2px solid rgba(255,255,255,0.1);" />
+            </div>
+            <div class="stat" id="caughtFishName">Name: -</div>
+            <div class="stat" id="caughtFishSize">Length: - cm</div>
+            <div class="stat" id="caughtFishWeight">Weight: - kg</div>
+            <div class="stat" id="caughtFishCategory">Category: -</div>
+            <button id="caughtFishOkBtn">OK</button>
+        </div>
+    </div>
+    <!-- Trophies modal -->
+    <div id="fishingModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:1300; align-items:center; justify-content:center;">
+        <div style="width:90%; max-width:900px; margin:auto; background:#0b0f14; border-radius:12px; padding:18px; color:#fff;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+                <h3>Fishing trophies / Trophées</h3>
+                <button id="closeFishingModal" style="background:transparent;border:0;color:#fff;font-size:20px;">✕</button>
+            </div>
+            <div id="trophiesGrid" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; margin-top:12px; max-height:60vh; overflow-y:auto;">
+                <!-- populated dynamically -->
+            </div>
+        </div>
+    </div>
+    <script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.161/build/three.module.js",
+    "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.161/examples/jsm/",
+    "three/addons/math/OBB.js": "https://cdn.jsdelivr.net/npm/three@0.161/examples/jsm/math/OBB.js",
+    "three/addons/objects/Water.js": "https://cdn.jsdelivr.net/npm/three@0.161/examples/jsm/objects/Water2.js",
+    "three/addons/objects/Sky.js": "https://cdn.jsdelivr.net/npm/three@0.161/examples/jsm/objects/Sky.js"
+  }
+}
+</script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { STLLoader } from 'three/examples/jsm/loaders/STLLoader.js';
+        import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+        import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+        import { OBB } from 'three/addons/math/OBB.js';
+        import { Water } from 'three/addons/objects/Water.js';
+        import { Sky } from 'three/addons/objects/Sky.js';
+        import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+        import { inputManager } from './src/core/InputManager.js';
+        import { terrainManager } from './src/core/TerrainManager.js';
+        import { EnvironmentManager } from './src/core/EnvironmentManager.js';
+        import { vehicleManager } from './src/core/VehicleManager.js';
+        import { jetSkiManager } from './src/core/JetSkiManager.js';
+        import { fishingManager } from './src/core/FishingManager.js';
+        import { soundManager } from './src/core/SoundManager.js';
+        window.vehicleManager = vehicleManager;
+        window.jetSkiManager = jetSkiManager;
+        window.terrainManager = terrainManager;
+        window.fishingManager = fishingManager;
+        window.soundManager = soundManager;
+        let scene, camera, renderer, controls;
+        let water;
+        let treePrototype = null;
+        let treeInstances = [];
+        let treeInstancedGroups = []; // array of {instancedMesh, count}
+        const TREE_COUNT = 100;
+        let eagle = null;
+        let eagleFlightController = null;
+        let terrainMesh;
+        let isTerrainLoaded = false;
+        let environmentManager;
+        let sun;
+        // Système de modes de jeu
+        let gameMode = 'capsule';
+        let capsulePlayer = null;
+        let playerMixer = null;
+        let walkAction = null, runAction = null;
+        let isModelLoaded = false;
+        let playerModelGroup = null;
+        let currentAction = null;
+        const capsuleControls = inputManager.controls;
+        let capsulePhysics = {
+            velocity: new THREE.Vector3(0, 0, 0),
+            isGrounded: false,
+            jumpPower: 0.3,
+            walkSpeed: 0.05,
+            runSpeed: 0.15,
+            gravity: -0.02
+        };
+        // Contrôles de la caméra par la souris (système snowhunter)
+        let capsuleCamera = {
+            pitch: 0,      // Rotation verticale (haut/bas)
+            yaw: -Math.PI / 2,  // Rotation horizontale (commence vers l'avant)
+            sensitivity: 0.002,
+            enabled: false
+        };
+        // Mode de caméra capsule (1ère ou 3ème personne)
+        let capsuleCameraMode = 'third'; // 'first' ou 'third'
+        // Fishing state (trolling detection)
+        let isTrolling = false;
+        // Contrôles du joueur (système snowhunter)
+        const capsuleKeys = inputManager.keys;
+        let capsuleCollisionObjects = [];
+        const capsuleRadius = 0.45;
+        const capsuleCollisionPadding = 0.15;
+        function registerCollisionObject(object) { if (object && !capsuleCollisionObjects.includes(object)) capsuleCollisionObjects.push(object); }
+        function isDescendant(child, parent) {
+            let node = child.parent;
+            while (node !== null) {
+                if (node === parent) return true;
+                node = node.parent;
+            }
+            return false;
+        }
+        function refreshCollisionObjects() {
+            capsuleCollisionObjects = [];
+            if (window.buildingGroup) window.buildingGroup.traverse((child) => { if (child.isMesh) registerCollisionObject(child); });
+            if (window.treeGroup) window.treeGroup.traverse((child) => { if (child.isMesh && child.name === 'Trunk') registerCollisionObject(child); });
+            scene.traverse((child) => {
+                if (!child.isMesh ||
+                    child === capsulePlayer ||
+                    child.userData.isPlayer ||
+                    isDescendant(child, capsulePlayer) ||
+                    child === terrainMesh ||
+                    child === water ||
+                    child === window.roadMesh ||
+                    child === window.beachMesh ||
+                    child.name === 'SkyBox' ||
+                    isDescendant(child, window.buildingGroup) ||
+                    isDescendant(child, window.treeGroup)) return;
+                // Exclude the vehicle and all of its child meshes from colliders list
+                if (window.vehicleManager && window.vehicleManager.vehicle) {
+                    if (child === window.vehicleManager.vehicle || isDescendant(child, window.vehicleManager.vehicle)) {
+                        return;
+                    }
+                }
+                if (window.jetSkiManager && window.jetSkiManager.vehicle) {
+                    if (child === window.jetSkiManager.vehicle || isDescendant(child, window.jetSkiManager.vehicle)) {
+                        return;
+                    }
+                }
+                registerCollisionObject(child);
+            });
+            window.collisionObjects = capsuleCollisionObjects;
+            window.refreshCollisionObjects = refreshCollisionObjects;
+        }
+        // Polygon math helpers for high-fidelity collision detection
+        function isPointInPolygon(p, vs) {
+            let inside = false;
+            for (let i = 0, j = vs.length - 1; i < vs.length; j = i++) {
+                const xi = vs[i].x, yi = vs[i].y;
+                const xj = vs[j].x, yj = vs[j].y;
+                const intersect = ((yi > p.y) !== (yj > p.y))
+                    && (p.x < (xj - xi) * (p.y - yi) / (yj - yi) + xi);
+                if (intersect) inside = !inside;
+            }
+            return inside;
+        }
+        function getClosestPointOnSegment(p, a, b) {
+            const ab = new THREE.Vector2().subVectors(b, a);
+            const ap = new THREE.Vector2().subVectors(p, a);
+            let t = ap.dot(ab) / ab.lengthSq();
+            t = Math.max(0, Math.min(1, t));
+            return new THREE.Vector2().copy(a).addScaledVector(ab, t);
+        }
+        function getClosestPointOnPolygon(p, vs) {
+            let minD2 = Infinity;
+            const closest = new THREE.Vector2();
+            for (let i = 0; i < vs.length; i++) {
+                const a = vs[i];
+                const b = vs[(i + 1) % vs.length];
+                const cp = getClosestPointOnSegment(p, a, b);
+                const d2 = p.distanceToSquared(cp);
+                if (d2 < minD2) {
+                    minD2 = d2;
+                    closest.copy(cp);
+                }
+            }
+            return { point: closest, distance: Math.sqrt(minD2) };
+        }
+        function resolveCapsuleCollisions() {
+            if (!capsulePlayer || !capsuleCollisionObjects.length) return;
+            const playerPos = capsulePlayer.position;
+            const minDist = capsuleRadius + (capsuleCollisionPadding || 0.1);
+            for (const object of capsuleCollisionObjects) {
+                // FIXED: Check for sky/terrain without triggering 'instanceof' errors
+                if (!object || object === terrainMesh || object.type === 'Sky') continue;
+                object.updateWorldMatrix(true, false);
+                const box = new THREE.Box3().setFromObject(object);
+                if (!isFinite(box.min.x) || box.isEmpty()) continue;
+                // Vertical check
+                const playerFeet = playerPos.y - 0.6;
+                const playerHead = playerPos.y + 1.2;
+                if (playerHead < box.min.y || playerFeet > box.max.y) continue;
+                // Horizontal check (fast-rejection AABB)
+                if (playerPos.x < box.min.x - minDist || playerPos.x > box.max.x + minDist ||
+                    playerPos.z < box.min.z - minDist || playerPos.z > box.max.z + minDist) {
+                    continue;
+                }
+                let pushX = 0;
+                let pushZ = 0;
+                let colliding = false;
+                if (object.userData && object.userData.polygon) {
+                    const p = new THREE.Vector2(playerPos.x, playerPos.z);
+                    const vs = object.userData.polygon;
+                    const inside = isPointInPolygon(p, vs);
+                    const closestResult = getClosestPointOnPolygon(p, vs);
+                    const closest = closestResult.point;
+                    const dist = closestResult.distance;
+                    if (inside) {
+                        colliding = true;
+                        const pushDir = new THREE.Vector2().subVectors(closest, p);
+                        const d = pushDir.length();
+                        if (d > 0.0001) {
+                            pushDir.divideScalar(d);
+                            pushX = pushDir.x * (d + minDist);
+                            pushZ = pushDir.y * (d + minDist);
+                        } else {
+                            pushX = 0;
+                            pushZ = minDist;
+                        }
+                    } else if (dist < minDist) {
+                        colliding = true;
+                        const pushDir = new THREE.Vector2().subVectors(p, closest);
+                        const d = pushDir.length();
+                        if (d > 0.0001) {
+                            pushDir.divideScalar(d);
+                            pushX = pushDir.x * (minDist - d);
+                            pushZ = pushDir.y * (minDist - d);
+                        } else {
+                            pushX = 0;
+                            pushZ = minDist;
+                        }
+                    }
+                } else {
+                    // Horizontal closest point check for non-building colliders (like trunks)
+                    const closestX = THREE.MathUtils.clamp(playerPos.x, box.min.x, box.max.x);
+                    const closestZ = THREE.MathUtils.clamp(playerPos.z, box.min.z, box.max.z);
+                    const diffX = playerPos.x - closestX;
+                    const diffZ = playerPos.z - closestZ;
+                    const distSq = diffX * diffX + diffZ * diffZ;
+                    if (distSq < minDist * minDist) {
+                        colliding = true;
+                        const dist = Math.sqrt(distSq);
+                        if (dist === 0) {
+                            pushZ = minDist;
+                        } else {
+                            const overlap = minDist - dist;
+                            pushX = (diffX / dist) * overlap;
+                            pushZ = (diffZ / dist) * overlap;
+                        }
+                    }
+                }
+                if (colliding) {
+                    // ANTI-TELEPORT: Limit the max push per frame to 0.5 units
+                    const maxPush = 0.5;
+                    capsulePlayer.position.x += THREE.MathUtils.clamp(pushX, -maxPush, maxPush);
+                    capsulePlayer.position.z += THREE.MathUtils.clamp(pushZ, -maxPush, maxPush);
+                    capsulePhysics.velocity.x = 0;
+                    capsulePhysics.velocity.z = 0;
+                }
+            }
+        }
+        const capsuleSpeed = 25;
+        const capsuleJumpHeight = 18;
+        const capsuleGravity = 40;
+        // Raycaster pour la détection du sol
+        const capsuleRaycaster = new THREE.Raycaster(new THREE.Vector3(), new THREE.Vector3(0, -1, 0), 0, 800);
+        // Fonction pour trouver une position de départ près des bâtiments
+        function CapsuleSpawnPoint() {
+            for (let attempt = 0; attempt < 5; attempt++) {
+                // Ajouter une variation aléatoire plus grande pour trouver un bon endroit
+                const offsetX = (Math.random() - 0.5) * 50; // Variation de ±25 unités
+                const offsetZ = (Math.random() - 0.5) * 50;
+                const startPos = {
+                    x: 190,
+                    z: -90
+                };
+                // Obtenir la hauteur du terrain à cette position
+                const terrainY = getTerrainHeightAt({ x: startPos.x, z: startPos.z });
+                // Vérifier si la position est sur le terrain (au-dessus du niveau de l'eau)
+                // WATER_LEVEL = 0.4, donc on veut être significativement au-dessus
+                if (terrainY > WATER_LEVEL + 0.5) { // Au moins 0.5 au-dessus de l'eau pour être sûr
+                    startPos.y = terrainY + 40; // Positionner beaucoup plus haut au-dessus du terrain
+                    return startPos;
+                }
+            }
+            // Si aucune bonne position n'est trouvée, utiliser une position par défaut sur le terrain
+            console.warn('⚠️ Aucune position sur le terrain trouvée, utilisation de la position par défaut');
+            const defaultPos = { x: 0, z: 100 };
+            const terrainY = getTerrainHeightAt(defaultPos);
+            // S'assurer que même la position par défaut est sur le terrain
+            const finalY = Math.max(terrainY + 15, WATER_LEVEL + 15); // Beaucoup plus haut pour être sûr
+            console.log('📍 Position par défaut utilisée:', { x: defaultPos.x, y: finalY, z: defaultPos.z });
+            console.log(`📍 Hauteur du terrain: ${terrainY.toFixed(3)}, Niveau de l'eau: ${WATER_LEVEL}`);
+            return {
+                x: defaultPos.x,
+                y: finalY,
+                z: defaultPos.z
+            };
+        }
+        // Fonction pour créer le personnage capsule
+        function createCapsulePlayer() {
+            capsulePlayer = new THREE.Group();
+            // Invisible collision capsule for debugging/raycasting if needed
+            const capsuleGeometry = new THREE.CapsuleGeometry(0.5, 1.5, 4, 8);
+            const capsuleMaterial = new THREE.MeshBasicMaterial({ visible: false });
+            const dummyMesh = new THREE.Mesh(capsuleGeometry, capsuleMaterial);
+            dummyMesh.userData.isPlayer = true;
+            capsulePlayer.add(dummyMesh);
+            playerModelGroup = new THREE.Group();
+            capsulePlayer.add(playerModelGroup);
+            const startPos = CapsuleSpawnPoint();
+            const capsuleGroundOffset = 1.2;
+            const terrainY = getTerrainHeightAt({ x: startPos.x, z: startPos.z });
+            const safeY = terrainY + capsuleGroundOffset;
+            capsulePlayer.position.set(startPos.x, safeY, startPos.z);
+            capsulePlayer.scale.set(0.5, 0.5, 0.5);
+            // 🌟 THE FIX: Rotate the player capsule 45 degrees clockwise
+            capsulePlayer.rotation.y = -THREE.MathUtils.degToRad(45);
+            scene.add(capsulePlayer);
+            // Reset physics cleanly
+            capsulePhysics.velocity.set(0, 0, 0);
+            capsulePhysics.isGrounded = true;
+            // Ensure the third-person camera starts behind the capsule
+            capsuleCamera.pitch = 0.1;
+            setCapsuleCameraBehindPlayer();
+            // Load 3D Models
+            const gltfLoader = new GLTFLoader();
+            const dracoLoader = new DRACOLoader();
+            dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.1/');
+            gltfLoader.setDRACOLoader(dracoLoader);
+            gltfLoader.load('./3DModels/Happy_Animation_Walking.glb', (gltf) => {
+                const model = gltf.scene;
+                model.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                        child.userData.isPlayer = true;
+                    }
+                });
+                // Offset vertically so the model stands on the ground
+                model.position.y = -1.2;
+                playerModelGroup.add(model);
+                playerMixer = new THREE.AnimationMixer(model);
+                if (gltf.animations && gltf.animations.length > 0) {
+                    walkAction = playerMixer.clipAction(gltf.animations[0]);
+                    walkAction.play();
+                    currentAction = walkAction;
+                }
+                gltfLoader.load('./3DModels/Happy_Animation_Running.glb', (runGltf) => {
+                    if (runGltf.animations && runGltf.animations.length > 0) {
+                        runAction = playerMixer.clipAction(runGltf.animations[0]);
+                    }
+                    isModelLoaded = true;
+                });
+            });
+            console.log('🎮 Capsule created at:', capsulePlayer.position);
+        }
+        function setCapsuleCameraBehindPlayer() {
+            if (!capsulePlayer || !camera) return;
+            capsuleCamera.yaw = capsulePlayer.rotation.y;
+            capsuleCamera.pitch = 0.1;
+            const distance = 4;
+            const height = 3;
+            const cameraOffset = new THREE.Vector3(
+                -distance * Math.sin(capsuleCamera.yaw),
+                height,
+                -distance * Math.cos(capsuleCamera.yaw)
+            );
+            const cameraPosition = capsulePlayer.position.clone().add(cameraOffset);
+            camera.position.copy(cameraPosition);
+            camera.lookAt(capsulePlayer.position.clone().add(new THREE.Vector3(0, 1, 0)));
+        }
+        // Fonction pour mettre à jour la physique du personnage capsule 
+        function updateCapsulePhysics(delta) {
+            capsuleRaycaster.params.Mesh.raycastEvents = true;
+            if (!capsulePlayer || (gameMode !== 'capsule' && gameMode !== 'fishing')) return;
+            const direction = new THREE.Vector3();
+            // Mouvement basé sur la caméra
+            const tempCamera = new THREE.PerspectiveCamera(75, 1, 0.1, 1000);
+            tempCamera.rotation.order = 'YXZ';
+            tempCamera.rotation.y = capsuleCamera.yaw;
+            tempCamera.rotation.x = capsuleCamera.pitch;
+            const frontVector = new THREE.Vector3(0, 0, -1).applyQuaternion(tempCamera.quaternion);
+            frontVector.y = 0;
+            frontVector.normalize();
+            const rightVector = new THREE.Vector3(1, 0, 0).applyQuaternion(tempCamera.quaternion);
+            rightVector.y = 0;
+            rightVector.normalize();
+            // Mapping corrigé: W avant, S arrière, A gauche, D droite
+            const wantsForward = capsuleKeys['KeyW'] || capsuleControls.forward || capsuleControls.autoMove || capsuleControls.autoRun;
+            const wantsBackward = capsuleKeys['KeyS'] || capsuleControls.backward;
+            if (wantsForward && !wantsBackward) direction.sub(frontVector);
+            if (wantsBackward) direction.add(frontVector);
+            if (capsuleKeys['KeyA'] || capsuleControls.left) direction.add(rightVector);
+            if (capsuleKeys['KeyD'] || capsuleControls.right) direction.sub(rightVector);
+            let magnitude = 1;
+            if (Math.abs(capsuleControls.joyMoveX) > 0.05 || Math.abs(capsuleControls.joyMoveY) > 0.05) {
+                direction.set(0, 0, 0);
+                direction.add(frontVector.clone().multiplyScalar(capsuleControls.joyMoveY));
+                direction.sub(rightVector.clone().multiplyScalar(capsuleControls.joyMoveX));
+                magnitude = Math.min(1, Math.sqrt(capsuleControls.joyMoveX ** 2 + capsuleControls.joyMoveY ** 2));
+            }
+            const moveSpeed = (capsuleKeys['ShiftLeft'] || capsuleControls.run || capsuleControls.autoRun) ? 5 : 3; // Vitesse de déplacement
+            const capsuleGroundOffset = 0.6; // Offset pour coller au sol
+            if (direction.lengthSq() > 0) {
+                if (direction.lengthSq() > 1) direction.normalize();
+                capsulePhysics.velocity.x = direction.x * moveSpeed * magnitude;
+                capsulePhysics.velocity.z = direction.z * moveSpeed * magnitude;
+                const targetRotation = Math.atan2(direction.x, direction.z);
+                capsulePlayer.rotation.y = THREE.MathUtils.lerp(capsulePlayer.rotation.y, targetRotation, 0.15);
+            } else {
+                capsulePhysics.velocity.x *= Math.pow(0.82, delta * 60);
+                capsulePhysics.velocity.z *= Math.pow(0.82, delta * 60);
+            }
+            if ((capsuleKeys['Space'] || capsuleControls.jump) && capsulePhysics.isGrounded) {
+                capsulePhysics.velocity.y = capsuleJumpHeight;
+                capsulePhysics.isGrounded = false;
+            }
+            capsulePhysics.velocity.y -= capsuleGravity * delta;
+            if (gameMode === 'fishing') {
+                // In fishing mode the player stays in place while input still influences the rod state.
+                const isMoving = direction.lengthSq() > 0 || Math.abs(capsuleControls.joyMoveX) > 0.05 || Math.abs(capsuleControls.joyMoveY) > 0.05;
+                isTrolling = !!isMoving;
+                capsulePhysics.velocity.x = 0;
+                capsulePhysics.velocity.z = 0;
+                capsulePhysics.velocity.y = 0;
+                capsulePhysics.isGrounded = true;
+
+                //stop all footstep sounds
+                if (typeof soundManager !== 'undefined' && soundManager) {
+                    soundManager.stopAllFootstepSounds();
+                }
+
+            } else {
+                capsulePlayer.position.x += capsulePhysics.velocity.x * delta;
+                capsulePlayer.position.z += capsulePhysics.velocity.z * delta;
+                capsulePlayer.position.y += capsulePhysics.velocity.y * delta;
+                resolveCapsuleCollisions();
+            }
+            // Update footstep sounds based on movement
+            const isMoving = direction.lengthSq() > 0 && gameMode !== 'fishing';
+            const isRunning = (capsuleKeys['ShiftLeft'] || capsuleControls.run || capsuleControls.autoRun) && gameMode !== 'fishing';
+            if (typeof soundManager !== 'undefined' && soundManager) {
+                soundManager.updateFootsteps(delta, isMoving, capsulePlayer.position, isRunning, capsulePhysics.isGrounded);
+            }
+            // Update animations
+            if (playerMixer && isModelLoaded) {
+                playerMixer.update(delta);
+                if (isMoving) {
+                    if (isRunning && runAction) {
+                        if (currentAction !== runAction) {
+                            runAction.reset().fadeIn(0.2).play();
+                            if (walkAction) walkAction.fadeOut(0.2);
+                            currentAction = runAction;
+                        }
+                        runAction.paused = false;
+                    } else if (walkAction) {
+                        if (currentAction !== walkAction) {
+                            walkAction.reset().fadeIn(0.2).play();
+                            if (runAction) runAction.fadeOut(0.2);
+                            currentAction = walkAction;
+                        }
+                        walkAction.paused = false;
+                    }
+                } else {
+                    // Standby mode
+                    if (walkAction) {
+                        if (currentAction !== walkAction) {
+                            walkAction.reset().fadeIn(0.2).play();
+                            if (runAction) runAction.fadeOut(0.2);
+                            currentAction = walkAction;
+                        }
+                        walkAction.paused = true;
+                    }
+                }
+            }
+            const mapBounds = 450;
+            capsulePlayer.position.x = THREE.MathUtils.clamp(capsulePlayer.position.x, -mapBounds, mapBounds);
+            capsulePlayer.position.z = THREE.MathUtils.clamp(capsulePlayer.position.z, -mapBounds, mapBounds);
+            // Shoreline proximity sensor: sample points in a 6m radius to detect nearby water
+            try {
+                const proximityRadius = 6.0;
+                let nearWater = false;
+                for (let a = 0; a < 8; a++) {
+                    const ang = (a / 8) * Math.PI * 2;
+                    const sample = new THREE.Vector3(
+                        capsulePlayer.position.x + Math.cos(ang) * proximityRadius,
+                        capsulePlayer.position.y,
+                        capsulePlayer.position.z + Math.sin(ang) * proximityRadius
+                    );
+                    if (terrainManager.isInLake(sample)) { nearWater = true; break; }
+                }
+                const onWater = terrainManager.isInLake(capsulePlayer.position);
+                const banner = document.getElementById('fishingBanner');
+                if (!onWater && nearWater) {
+                    if (banner) banner.style.display = 'block';
+                } else {
+                    if (banner) banner.style.display = 'none';
+                }
+            } catch (e) {
+                // ignore if terrainManager not ready
+            }
+            let groundY = null;
+            try {
+                groundY = getGroundHeightAt(capsulePlayer.position);
+            } catch (e) {
+                console.warn('Erreur getGroundHeightAt:', e);
+                if (terrainMesh) {
+                    const tempPos = capsulePlayer.position.clone();
+                    tempPos.y = 1000;
+                    capsuleRaycaster.set(tempPos, new THREE.Vector3(0, -1, 0));
+                    capsuleRaycaster.far = 2000;
+                    const intersects = capsuleRaycaster.intersectObject(terrainMesh);
+                    if (intersects.length > 0) groundY = intersects[0].point.y;
+                }
+            }
+            if (groundY !== null) {
+                const targetY = groundY + capsuleGroundOffset;
+                if (capsulePlayer.position.y <= targetY) {
+                    capsulePlayer.position.y = targetY;
+                    capsulePhysics.velocity.y = 0;
+                    capsulePhysics.isGrounded = true;
+                } else {
+                    capsulePhysics.isGrounded = false;
+                }
+            } else {
+                capsulePhysics.isGrounded = false;
+                if (capsulePlayer.position.y < -50) {
+                    capsulePlayer.position.y = 50;
+                    capsulePhysics.velocity.y = 0;
+                }
+            }
+        }
+        // Fonction pour mettre à jour la caméra en mode capsule
+        function updateCapsuleCamera() {
+            if (!capsulePlayer || (gameMode !== 'capsule' && gameMode !== 'fishing')) return;
+            if (Math.abs(capsuleControls.joyCamX) > 0.05) {
+                capsuleCamera.yaw -= capsuleControls.joyCamX * 0.05;
+                if (capsuleCamera.yaw > Math.PI * 2) capsuleCamera.yaw -= Math.PI * 2;
+                if (capsuleCamera.yaw < -Math.PI * 2) capsuleCamera.yaw += Math.PI * 2;
+            }
+            if (Math.abs(capsuleControls.joyCamY) > 0.05) {
+                capsuleCamera.pitch += capsuleControls.joyCamY * 0.05;
+                capsuleCamera.pitch = THREE.MathUtils.clamp(capsuleCamera.pitch, -Math.PI / 3, Math.PI / 3);
+            }
+            if (capsuleCameraMode === 'first') {
+                // Mode 1ère personne - caméra dans la tête du personnage
+                const eyeHeight = 0.85; // Hauteur des yeux par rapport au centre de la capsule
+                const forwardOffset = 1; // Petit décalage vers l'avant pour éviter de voir à travers le personnage
+                // Positionner la caméra au niveau des yeux du personnage, légèrement vers l'avant
+                const targetCameraPosition = capsulePlayer.position.clone();
+                targetCameraPosition.y += eyeHeight;
+                // Ajouter un décalage vers l'avant basé sur la direction du regard
+                const forwardDirection = new THREE.Vector3(0, 0, 1); // Inversé pour regarder vers l'avant
+                forwardDirection.applyAxisAngle(new THREE.Vector3(0, 1, 0), capsuleCamera.yaw);
+                targetCameraPosition.add(forwardDirection.multiplyScalar(forwardOffset));
+                // Interpolation douce pour un mouvement fluide
+                camera.position.lerp(targetCameraPosition, 0.2);
+                // Calculer la direction de regard basée sur yaw/pitch avec quaternions pour éviter l'inversion
+                const tempCamera = new THREE.PerspectiveCamera(75, 1, 0.1, 1000);
+                tempCamera.rotation.order = 'YXZ';
+                tempCamera.rotation.y = capsuleCamera.yaw;
+                tempCamera.rotation.x = capsuleCamera.pitch;
+                const lookDirection = new THREE.Vector3(0, 0, 1);
+                lookDirection.applyQuaternion(tempCamera.quaternion);
+                // Point de regard = position caméra + direction de regard
+                const lookTarget = camera.position.clone().add(lookDirection);
+                camera.lookAt(lookTarget);
+            } else {
+                // Mode 3ème personne - caméra derrière le personnage
+                const distance = 5;
+                const lookHeight = 1;
+                const horizontalDistance = distance * Math.cos(capsuleCamera.pitch);
+                const verticalOffset = distance * Math.sin(capsuleCamera.pitch);
+                const cameraOffset = new THREE.Vector3(
+                    -horizontalDistance * Math.sin(capsuleCamera.yaw),
+                    3 + verticalOffset,
+                    -horizontalDistance * Math.cos(capsuleCamera.yaw)
+                );
+                const targetCameraPosition = capsulePlayer.position.clone().add(cameraOffset);
+                camera.position.lerp(targetCameraPosition, 0.15);
+                const lookTarget = capsulePlayer.position.clone();
+                lookTarget.y += lookHeight;
+                camera.lookAt(lookTarget);
+            }
+        }
+        // Fonction pour gérer le mouvement de la souris
+        function handleMouseMove(event) {
+            if (!capsuleCamera.enabled) return;
+            const movementX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
+            const movementY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
+            if (gameMode === 'capsule' || gameMode === 'fishing') {
+                // Mettre à jour les angles de la caméra
+                capsuleCamera.yaw -= movementX * capsuleCamera.sensitivity;
+                capsuleCamera.pitch += movementY * capsuleCamera.sensitivity; // Inversé pour que souris haut = caméra haut
+                // Limiter l'angle vertical pour éviter de faire des tours complets
+                capsuleCamera.pitch = THREE.MathUtils.clamp(capsuleCamera.pitch, -Math.PI / 3, Math.PI / 3);
+                // Normaliser l'angle horizontal
+                if (capsuleCamera.yaw > Math.PI * 2) {
+                    capsuleCamera.yaw -= Math.PI * 2;
+                } else if (capsuleCamera.yaw < -Math.PI * 2) {
+                    capsuleCamera.yaw += Math.PI * 2;
+                }
+            } else if (gameMode === 'jetski') {
+                jetSkiManager.cameraYaw -= movementX * 0.002;
+                jetSkiManager.cameraPitch -= movementY * 0.002; // Inverted for natural look
+                jetSkiManager.cameraPitch = THREE.MathUtils.clamp(jetSkiManager.cameraPitch, -Math.PI / 3, Math.PI / 3);
+                jetSkiManager.lastCameraMoveTime = performance.now();
+            }
+        }
+        // Fonction pour activer/désactiver le contrôle de la souris
+        function toggleMouseControl() {
+            capsuleCamera.enabled = !capsuleCamera.enabled;
+            if (capsuleCamera.enabled) {
+                document.body.requestPointerLock();
+                console.log('🖱️ Contrôle de la souris activé');
+            } else {
+                document.exitPointerLock();
+                console.log('🖱️ Contrôle de la souris désactivé');
+            }
+        }
+        function getLakeFacingYaw(position) {
+            if (!terrainManager || typeof terrainManager.isInLake !== 'function') {
+                return capsulePlayer ? capsulePlayer.rotation.y : 0;
+            }
+            const sampleDistance = 14;
+            let bestAngle = null;
+            let bestDistance = Infinity;
+            for (let i = 0; i < 16; i++) {
+                const angle = (i / 16) * Math.PI * 2;
+                const sample = new THREE.Vector3(
+                    position.x + Math.cos(angle) * sampleDistance,
+                    position.y,
+                    position.z + Math.sin(angle) * sampleDistance
+                );
+                if (terrainManager.isInLake(sample)) {
+                    const dist = position.distanceTo(sample);
+                    if (dist < bestDistance) {
+                        bestDistance = dist;
+                        bestAngle = angle;
+                    }
+                }
+            }
+            if (bestAngle === null) {
+                return capsulePlayer ? capsulePlayer.rotation.y : 0;
+            }
+            return bestAngle + Math.PI;
+        }
+        // Fonction pour changer de mode de jeu
+        function switchGameMode(newMode) {
+            if (gameMode === newMode) return;
+            // Stop vehicle sounds when switching away from vehicle modes
+            if (gameMode === 'vehicle' && newMode !== 'vehicle') {
+                if (typeof soundManager !== 'undefined' && soundManager) {
+                    soundManager.stopUTVEngine();
+                }
+                vehicleManager.isDriving = false;
+            }
+            if (gameMode === 'jetski' && newMode !== 'jetski') {
+                if (typeof soundManager !== 'undefined' && soundManager) {
+                    soundManager.stopJetskiEngine();
+                }
+                jetSkiManager.isDriving = false;
+            }
+            gameMode = newMode;
+            console.log('🔄 Changement de mode:', gameMode);
+            // Mettre à jour le menu
+            document.querySelectorAll('.menu-item').forEach(item => {
+                item.classList.remove('active');
+            });
+            // Toggle responsive mobile run/jump buttons visibility based on driving state
+            const runBtn = document.querySelector('.run-btn');
+            const jumpBtn = document.querySelector('.jump-btn');
+            if (gameMode === 'capsule') {
+                document.getElementById('capsuleMode').classList.add('active');
+                if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+                    document.getElementById('mobileControls').classList.add('active');
+                }
+                if (runBtn) runBtn.style.display = 'block';
+                if (jumpBtn) jumpBtn.style.display = 'block';
+                // Montrer le personnage capsule
+                if (!capsulePlayer) createCapsulePlayer();
+                capsulePlayer.visible = true;
+                // Afficher le bouton de caméra en mode capsule
+                if (document.getElementById('cameraToggleBtn')) {
+                    document.getElementById('cameraToggleBtn').style.display = 'block';
+                }
+                // Reset the capsule camera orientation and place it directly behind the player
+                capsuleCamera.yaw = 0;
+                capsuleCamera.pitch = 0.1;
+                setCapsuleCameraBehindPlayer();
+                console.log('🎮 Mode capsule activé, personnage positionné à:', capsulePlayer.position);
+                console.log('📷 Caméra positionnée à:', camera.position);
+            } else if (gameMode === 'fishing') {
+                document.getElementById('capsuleMode').classList.add('active');
+                if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+                    document.getElementById('mobileControls').classList.add('active');
+                }
+                if (runBtn) runBtn.style.display = 'none';
+                if (jumpBtn) jumpBtn.style.display = 'none';
+                const fishBtn = document.getElementById('fishBtn');
+                const strikeBtn = document.getElementById('strikeBtn');
+                const reelBtn = document.getElementById('reelBtn');
+                const stopFishingBtn = document.getElementById('stopFishingBtn');
+                if (fishBtn) fishBtn.style.display = 'none';
+                if (strikeBtn) strikeBtn.style.display = 'block';
+                if (reelBtn) reelBtn.style.display = 'block';
+                if (stopFishingBtn) stopFishingBtn.style.display = 'block';
+                if (!capsulePlayer) createCapsulePlayer();
+                capsulePlayer.visible = true;
+                if (document.getElementById('cameraToggleBtn')) {
+                    document.getElementById('cameraToggleBtn').style.display = 'none';
+                }
+                capsuleCameraMode = 'first';
+                controls.enabled = false;
+                if (capsulePlayer) {
+                    const fishingYaw = getLakeFacingYaw(capsulePlayer.position);
+                    capsuleCamera.yaw = fishingYaw;
+                    capsuleCamera.pitch = -0.08;
+                    capsulePlayer.rotation.y = fishingYaw;
+                }
+                if (window.fishingManager && typeof window.fishingManager.startFishingGame === 'function') {
+                    window.fishingManager.startFishingGame();
+                } else if (window.fishingManager && typeof window.fishingManager.enterFishingMode === 'function') {
+                    window.fishingManager.enterFishingMode({ player: capsulePlayer, camera });
+                }
+            } else if (gameMode === 'vehicle') {
+                if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+                    document.getElementById('mobileControls').classList.add('active');
+                }
+                if (runBtn) runBtn.style.display = 'none';
+                if (jumpBtn) jumpBtn.style.display = 'none';
+                // Configure mobile action button as an Exit trigger
+                const mobBtn = document.querySelector('.action-btn-vehicle');
+                if (mobBtn) {
+                    mobBtn.style.display = 'block';
+                    mobBtn.textContent = 'SORTIR UTV';
+                }
+                // Hide character
+                if (capsulePlayer) capsulePlayer.visible = false;
+                if (document.getElementById('cameraToggleBtn')) {
+                    document.getElementById('cameraToggleBtn').style.display = 'block';
+                }
+                // Position camera right behind the UTV at entry
+                if (vehicleManager.vehicle) {
+                    const forwardX = Math.sin(vehicleManager.heading);
+                    const forwardZ = Math.cos(vehicleManager.heading);
+                    camera.position.set(
+                        vehicleManager.vehicle.position.x - forwardX * 9,
+                        vehicleManager.vehicle.position.y + 3.8,
+                        vehicleManager.vehicle.position.z - forwardZ * 9
+                    );
+                    camera.lookAt(vehicleManager.vehicle.position);
+                }
+            } else if (gameMode === 'jetski') {
+                document.getElementById('jetskiMode').classList.add('active');
+                if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
+                    document.getElementById('mobileControls').classList.add('active');
+                }
+                if (runBtn) runBtn.style.display = 'none';
+                if (jumpBtn) jumpBtn.style.display = 'none';
+                const mobBtn = document.querySelector('.action-btn-vehicle');
+                if (mobBtn) {
+                    mobBtn.style.display = 'block';
+                    mobBtn.textContent = 'SORTIR JETSKI';
+                }
+                if (capsulePlayer) capsulePlayer.visible = false;
+                if (document.getElementById('cameraToggleBtn')) {
+                    document.getElementById('cameraToggleBtn').style.display = 'block';
+                }
+                if (jetSkiManager.vehicle) {
+                    const forwardX = Math.sin(jetSkiManager.heading);
+                    const forwardZ = Math.cos(jetSkiManager.heading);
+                    camera.position.set(
+                        jetSkiManager.vehicle.position.x - forwardX * 7,
+                        jetSkiManager.vehicle.position.y + 3.0,
+                        jetSkiManager.vehicle.position.z - forwardZ * 7
+                    );
+                    camera.lookAt(jetSkiManager.vehicle.position);
+                }
+            }
+        }
+        // --- Physics-based steering variables (Replaces rigid pathing)
+        const WATER_LEVEL = -0.1;                      // Water surface height
+        let useOrbitControl = false; // Start with camera control disabled for immersive experience
+        // Load Height Map Texture
+        const textureLoader = new THREE.TextureLoader();
+        const heightMapPath = 'SWLakeHeightMap.png'; // Path to your height map PNG file
+        const lakeBoundaryPath = 'SWLakeBoundary.png'; // Path to lake boundary PNG (white=water, black=land)
+        const roadsPath = 'SW_Roads.png'; // Path to roads PNG (black roads)
+        const buildingsPath = 'SW_Buildings.png'; // Path to buildings PNG (black buildings)
+        const beachPath = 'SW_Beach.png'; // Path to beach PNG (beach areas)
+        const treesPath = 'SW_Trees.png'; // Path to trees PNG (black = tree locations)
+        let roadTexture, beachTexture, buildingGroup, treeGroup;
+        const clock = new THREE.Clock();
+        const canvasHeight = document.createElement('canvas');
+        init();
+        // Initialiser le mode de jeu après que le terrain soit chargé
+        function initializeGameMode() {
+            if (terrainManager.isTerrainLoaded && typeof getTerrainHeightAt === 'function') {
+                if (!capsulePlayer) createCapsulePlayer();
+                gameMode = 'rower';
+                switchGameMode('capsule');
+            } else {
+                setTimeout(initializeGameMode, 500);
+            }
+        }
+        // Démarrer l'initialisation
+        // Initialisation du mode capsule déclenchée quand le terrain est prêt
+        animate();
+        function enhanceGLTFMaterials(object) {
+            object.traverse((child) => {
+                if (!child.isMesh || !child.material) return;
+                const materials = Array.isArray(child.material) ? child.material : [child.material];
+                materials.forEach((material) => {
+                    if (!material) return;
+                    if (material.map) material.map.encoding = THREE.sRGBEncoding;
+                    if (material.emissiveMap) material.emissiveMap.encoding = THREE.sRGBEncoding;
+                    if (material.isMeshStandardMaterial || material.isMeshPhysicalMaterial) {
+                        material.roughness = Math.min(material.roughness !== undefined ? material.roughness : 1, 0.85);
+                        material.metalness = material.metalness !== undefined ? material.metalness : 0;
+                        material.envMapIntensity = material.envMapIntensity !== undefined ? material.envMapIntensity : 1.0;
+                        material.needsUpdate = true;
+                    }
+                });
+            });
+        }
+        // LOAD ENTRANCE FIREPLACE GLB MODEL
+        // ==========================================
+        function loadEntranceFirePlace() {
+            const gltfLoader = new GLTFLoader();
+            const dracoLoader = new DRACOLoader();
+            dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.1/');
+            gltfLoader.setDRACOLoader(dracoLoader);
+            gltfLoader.load('3DModels/EntranceFirePlace.glb', (gltf) => {
+                const fireplace = gltf.scene;
+                const FirePlaceX = 119;
+                const FirePlaceZ = -44;
+                // Get terrain height at the specified position
+                const terrainY = getTerrainHeightAt({ x: FirePlaceX, z: FirePlaceZ });
+                // Position the fireplace on the terrain
+                fireplace.position.set(FirePlaceX, terrainY + 1.7, FirePlaceZ);
+                enhanceGLTFMaterials(fireplace);
+                fireplace.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                    }
+                });
+                fireplace.scale.set(4, 4, 4);
+                fireplace.AmbientLight = true;
+                scene.add(fireplace);
+                refreshCollisionObjects();
+                console.log('✅ Entrance Fireplace loaded successfully at position: x=-95, z=200');
+                console.log(`📍 Terrain height at position: ${terrainY.toFixed(2)}`);
+            },
+                (xhr) => {
+                    console.log(`Loading Entrance Fireplace: ${(xhr.loaded / xhr.total * 100).toFixed(1)}%`);
+                },
+                (error) => {
+                    console.error('❌ Error loading Entrance Fireplace:', error);
+                });
+        }
+        // LOAD FLYING EAGLE
+        // ==========================================
+        function loadFlyingEagle() {
+            const gltfLoader = new GLTFLoader();
+            const dracoLoader = new DRACOLoader();
+            dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.1/');
+            gltfLoader.setDRACOLoader(dracoLoader);
+            gltfLoader.load('3DModels/eagle.glb', (gltf) => {
+                eagle = gltf.scene;
+                const EagleX = 0; // Positionner l'aigle au centre du lac pour un effet de vol majestueux au-dessus de l'eau
+                const EagleZ = 0; // 
+                // Get terrain height at the specified position
+                const terrainY = getTerrainHeightAt({ x: EagleX, z: EagleZ });
+                // Position the eagle on the terrain
+                eagle.position.set(EagleX, terrainY + 60, EagleZ);
+                enhanceGLTFMaterials(eagle);
+                eagle.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                    }
+                });
+                eagle.scale.set(0.001, 0.001, 0.001);
+                eagle.AmbientLight = true;
+                scene.add(eagle);
+                eagleFlightController = new EagleFlightController(eagle);
+                console.log('✅ Eagle loaded successfully and flight controller initialized!');
+            },
+                (xhr) => {
+                    console.log(`Loading Eagle: ${(xhr.loaded / xhr.total * 100).toFixed(1)}%`);
+                },
+                (error) => {
+                    console.error('❌ Error loading Entrance Eagle:', error);
+                });
+        }
+        // EAGLE FLIGHT CONTROLLER CLASS
+        class EagleFlightController {
+            constructor(eagleModel) {
+                this.eagle = eagleModel;
+                this.baseHeight = 70;
+                this.mapBounds = 500;
+                this.circleRadius = 150;
+                this.eagle.visible = true;
+                this.isFlying = true;
+                this.flightTime = 0;
+                this.flightDuration = 200; // Faster crossing, since the distance is now shorter
+                this.path = this.generateFlightPath();
+                this.timeSinceLastFlight = 0;
+                this.spawnDelay = THREE.MathUtils.randInt(600, 900); // 10 to 15 minutes
+                this.eagleCryPlayed = false;
+            }
+            generateFlightPath() {
+                const angle = Math.random() * Math.PI * 2;
+                const spawnDistance = this.mapBounds - 100;
+                const startX = Math.cos(angle) * spawnDistance;
+                const startZ = Math.sin(angle) * spawnDistance;
+                const endX = -startX;
+                const endZ = -startZ;
+                console.log(`🦅 New flight path generated. Start: (${startX.toFixed(1)}, ${startZ.toFixed(1)}), End: (${endX.toFixed(1)}, ${endZ.toFixed(1)})`);
+                return {
+                    start: new THREE.Vector3(startX, 0, startZ),
+                    end: new THREE.Vector3(endX, 0, endZ)
+                };
+            }
+            getPositionAt(progress) {
+                const start = this.path.start;
+                const end = this.path.end;
+                let pos = new THREE.Vector3().lerpVectors(start, end, progress);
+                // Calculate horizontal circular offset
+                const numCircles = 4; // Do 4 circles across the flight
+                const angle = progress * Math.PI * 2 * numCircles;
+                // Envelope ensures radius is 0 at start and end, maximum at the center of the map
+                const envelope = Math.sin(progress * Math.PI);
+                const radius = this.circleRadius * envelope;
+                // Simple horizontal circles
+                pos.x += Math.cos(angle) * radius;
+                pos.z += Math.sin(angle) * radius;
+                // Adjust height based on terrain
+                const terrainY = typeof getTerrainHeightAt === 'function' ? getTerrainHeightAt({ x: pos.x, z: pos.z }) : 0;
+                pos.y = this.baseHeight + terrainY;
+                return pos;
+            }
+            update(delta) {
+                if (!this.isFlying) {
+                    this.timeSinceLastFlight += delta;
+                    if (this.timeSinceLastFlight >= this.spawnDelay) {
+                        this.isFlying = true;
+                        this.flightTime = 0;
+                        this.eagleCryPlayed = false;
+                        this.path = this.generateFlightPath();
+                        this.eagle.visible = true;
+                        console.log('🦅 Eagle starts a new flight!');
+                    }
+                    return;
+                }
+                this.flightTime += delta;
+                let flightProgress = this.flightTime / this.flightDuration;
+                if (!this.eagleCryPlayed && flightProgress > 0.5) {
+                    this.playEagleCry();
+                    this.eagleCryPlayed = true;
+                    console.log('🦅 Eagle takes flight with a mighty cry!');
+                }
+                if (flightProgress >= 1.0) {
+                    this.eagle.visible = false;
+                    this.isFlying = false;
+                    this.path = null;
+                    this.timeSinceLastFlight = 0;
+                    this.spawnDelay = THREE.MathUtils.randInt(600, 900); // 10 to 15 minutes
+                    console.log(`🦅 Eagle finished flight. Cooldown: ${this.spawnDelay}s`);
+                    return;
+                }
+                const currentPos = this.getPositionAt(flightProgress);
+                // Track position every 2 seconds in console
+                if (!this.lastLogTime || this.flightTime - this.lastLogTime >= 2) {
+                    //console.log(`🦅 Eagle is currently at: X:${currentPos.x.toFixed(0)}, Y:${currentPos.y.toFixed(0)}, Z:${currentPos.z.toFixed(0)}`);
+                    this.lastLogTime = this.flightTime;
+                }
+                // Evaluate slightly ahead and behind to compute the turning curvature
+                const nextProgress = Math.min(1.0, flightProgress + 0.005);
+                const nextPos = this.getPositionAt(nextProgress);
+                const prevProgress = Math.max(0.0, flightProgress - 0.005);
+                const prevPos = this.getPositionAt(prevProgress);
+                // Make the eagle face forward
+                this.eagle.position.copy(currentPos);
+                this.eagle.lookAt(nextPos);
+                // Calculate the turn vector to bank (roll) the eagle
+                const dir1 = new THREE.Vector3().subVectors(currentPos, prevPos).normalize();
+                const dir2 = new THREE.Vector3().subVectors(nextPos, currentPos).normalize();
+                const turnVector = new THREE.Vector3().crossVectors(dir1, dir2);
+                // turnVector.y gives us the horizontal turn amount.
+                // We use a much smaller multiplier so it doesn't do barrel rolls!
+                // We use a negative multiplier so it banks INTO the turn instead of away from it.
+                let rollAmount = turnVector.y * -3;
+                // Clamp the roll to a maximum of 80 degrees (approx 1.4 radians)
+                const maxRoll = 80 * (Math.PI / 180);
+                rollAmount = Math.max(-maxRoll, Math.min(maxRoll, rollAmount));
+                // Smoothly apply the bank using local Z rotation (roll)
+                this.eagle.rotateZ(rollAmount);
+            }
+            playEagleCry() {
+                if (typeof soundManager !== 'undefined' && soundManager) {
+                    if (soundManager.playEagleCry) {
+                        // Pass the eagle's world position so the cry is spatialized
+                        soundManager.playEagleCry(this.eagle.position);
+                    } else if (soundManager.playSound) {
+                        soundManager.playSound('eagleCry');
+                    }
+                    console.log('🦅 Eagle cry played');
+                }
+            }
+        }
+
+        // LOAD Boat DOCK GLB MODEL
+        // ==========================================
+        function loadBoatDock() {
+            const gltfLoader = new GLTFLoader();
+            const dracoLoader = new DRACOLoader();
+            dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.1/');
+            gltfLoader.setDRACOLoader(dracoLoader);
+            gltfLoader.load('3DModels/Building_Dock.glb', (gltf) => {
+                const dock = gltf.scene;
+                const DockPlaceX = 22;
+                const DockPlaceZ = 50;
+                // Get terrain height at the specified position
+                const terrainY = getTerrainHeightAt({ x: DockPlaceX, z: DockPlaceZ });
+                // Position the dock on the terrain
+                dock.position.set(DockPlaceX, terrainY + 1.2, DockPlaceZ);
+                dock.rotation.y = Math.PI + (137 * Math.PI / 180); // Rotate the dock to face the water
+                enhanceGLTFMaterials(dock);
+                dock.traverse((child) => {
+                    if (child.isMesh) {
+                        child.castShadow = true;
+                        child.receiveShadow = true;
+                    }
+                });
+                dock.scale.set(16, 16, 16);
+                dock.AmbientLight = true;
+                scene.add(dock);
+                refreshCollisionObjects();
+                console.log('✅ Boat Dock loaded successfully at position: x=-95, z=200');
+                console.log(`📍 Terrain height at position: ${terrainY.toFixed(2)}`);
+            },
+                (xhr) => {
+                    console.log(`Loading Boat Dock: ${(xhr.loaded / xhr.total * 100).toFixed(1)}%`);
+                },
+                (error) => {
+                    console.error('❌ Error loading Boat Dock:', error);
+                });
+        }
+
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x87ceeb);
+            scene.fog = new THREE.FogExp2(0x87ceeb, 0.003);
+            // Camera
+            camera = new THREE.PerspectiveCamera(
+                60,
+                window.innerWidth / window.innerHeight,
+                0.1,
+                5000);
+            camera.position.set(0, 20, 30);
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.outputEncoding = THREE.sRGBEncoding;
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.2;
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            document.body.appendChild(renderer.domElement);
+            // Controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            // Lights
+            const dirLight = new THREE.DirectionalLight(0xffffff, 1.2);
+            dirLight.position.set(500, 800, 500);
+            dirLight.castShadow = true;
+            dirLight.shadow.mapSize.width = 2048;
+            dirLight.shadow.mapSize.height = 2048;
+            dirLight.shadow.camera.near = 1;
+            dirLight.shadow.camera.far = 2500;
+            dirLight.shadow.camera.left = -700;
+            dirLight.shadow.camera.right = 700;
+            dirLight.shadow.camera.top = 700;
+            dirLight.shadow.camera.bottom = -700;
+            dirLight.shadow.bias = -0.0005;
+            scene.add(dirLight);
+            scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+            const hemiLight = new THREE.HemisphereLight(0xddeeff, 0x444455, 0.45);
+            hemiLight.position.set(0, 200, 0);
+            scene.add(hemiLight);
+            // Sky
+            const sky = new Sky();
+            sky.scale.setScalar(450000); // Stretch the sky dome to the horizon
+            sky.name = 'SkyBox';
+            scene.add(sky);
+            sun = new THREE.Vector3();
+            // Set sky atmosphere parameters for a gorgeous, crisp day
+            const effectController = {
+                turbidity: 8, // Higher turbidity for more atmospheric effect
+                rayleigh: 2, // Rayleigh scattering for blue sky
+                mieCoefficient: 0.005, // Mie scattering for haze
+                mieDirectionalG: 0.8, // Mie directional scattering
+                elevation: 35, // Golden hour / afternoon angle
+                azimuth: 180,  // Sun position direction
+            };
+            const uniforms = sky.material.uniforms;
+            uniforms['turbidity'].value = effectController.turbidity;
+            uniforms['rayleigh'].value = effectController.rayleigh;
+            uniforms['mieCoefficient'].value = effectController.mieCoefficient;
+            uniforms['mieDirectionalG'].value = effectController.mieDirectionalG;
+            // Calculate sun position in spherical coordinates
+            const phi = THREE.MathUtils.degToRad(90 - effectController.elevation);
+            const theta = THREE.MathUtils.degToRad(effectController.azimuth);
+            sun.setFromSphericalCoords(1, phi, theta);
+            uniforms['sunPosition'].value.copy(sun);
+            // Make the main directional light follow the sun exactly
+            dirLight.position.copy(sun).multiplyScalar(1000);
+            // ==========================================
+            // 2. REALISTIC WATER IMPLEMENTATION
+            // ==========================================
+            const waterGeometry = new THREE.PlaneGeometry(1000, 1000);
+            water = new Water(waterGeometry, {
+                color: 0x1d4a75,        // Rich, natural lake deep water base color
+                scale: 4.0,             // Scale of the wave ripples
+                flowDirection: new THREE.Vector2(0.1, 0.1), // Direction the lake currents flow
+                textureWidth: 1024,
+                textureHeight: 1024
+            });
+            water.rotation.x = -Math.PI / 2;
+            water.position.y = -0.1;
+            water.position.z = 0;
+            scene.add(water);
+            // Initialize Fishing Manager once scene, camera and water are ready
+            if (window.fishingManager && typeof window.fishingManager.init === 'function') {
+                window.fishingManager.init(scene, camera, water, getTerrainHeightAt, isInLake, controls);
+            }
+            environmentManager = new EnvironmentManager(scene, terrainManager);
+            // Load terrain with height map and custom shader
+            loadTerrain();
+            // Load all textures
+            // Load lake boundary mask
+            textureLoader.load(lakeBoundaryPath, (t) => terrainManager.setupLakeBoundary(t));
+            // Load roads overlay
+            textureLoader.load(roadsPath, (t) => terrainManager.setupRoads(t));
+            // Load buildings overlay
+            textureLoader.load(buildingsPath, (t) => terrainManager.setupBuildings(t));
+            // Load beach overlay
+            textureLoader.load(beachPath, (t) => terrainManager.setupBeach(t));
+            // Load trees overlay
+            textureLoader.load(treesPath, (t) => terrainManager.setupTrees(t));
+            textureLoader.load(heightMapPath, (texture) => {
+                // Keep height map for terrain rendering but use lake boundary for collision
+                terrainManager.setupHeightMapCollision(texture);
+            });
+            // Load Entrance Fireplace GLB model
+            loadEntranceFirePlace();
+            loadFlyingEagle();
+
+            // Load Boat Dock GLB model
+            loadBoatDock();
+            // Load drivable side-by-side UTV using vehicleManager
+            vehicleManager.loadVehicle(scene);
+            jetSkiManager.loadVehicle(scene);
+            // Add keyboard shortcut to drive vehicle (press 'E')
+            window.addEventListener('keydown', async (event) => {
+                if (event.code === 'KeyE') {
+                    if (capsulePlayer) {
+                        if (jetSkiManager.checkProximity(capsulePlayer.position) || jetSkiManager.isDriving) {
+                            jetSkiManager.toggleVehicleEntry(capsulePlayer, switchGameMode);
+                        } else {
+                            vehicleManager.toggleVehicleEntry(capsulePlayer, switchGameMode);
+                        }
+                    }
+                }
+                if ((event.code === 'Space' || event.key === ' ') && gameMode === 'fishing' && window.fishingManager) {
+                    event.preventDefault();
+                    if (typeof window.fishingManager.onFishingMouseDown === 'function') {
+                        window.fishingManager.onFishingMouseDown();
+                    }
+                }
+            });
+            document.addEventListener('keyup', (event) => {
+                if ((event.code === 'Space' || event.key === ' ') && gameMode === 'fishing' && window.fishingManager) {
+                    if (typeof window.fishingManager.onFishingMouseUp === 'function') {
+                        window.fishingManager.onFishingMouseUp();
+                    }
+                }
+            });
+            // Initialize Input Manager
+            inputManager.init();
+            // Initialize Sound Manager and load footstep sounds
+            if (typeof soundManager !== 'undefined') {
+                soundManager.initialize().then(() => {
+                    soundManager.loadFootstepSounds();
+                    soundManager.loadSound('eagleCry', 'sounds/eaglecry.mp3');
+                    soundManager.loadSound('jetskiWake', 'sounds/jetski_wake.mp3');
+                });
+            }
+            // Hook up mobile button listener for entering/exiting the UTV or JetSki
+            const mobBtn = document.querySelector('.action-btn-vehicle');
+            if (mobBtn) {
+                const handleAction = (e) => {
+                    e.preventDefault();
+                    if (capsulePlayer) {
+                        if (jetSkiManager.checkProximity(capsulePlayer.position) || jetSkiManager.isDriving) {
+                            jetSkiManager.toggleVehicleEntry(capsulePlayer, switchGameMode);
+                        } else {
+                            vehicleManager.toggleVehicleEntry(capsulePlayer, switchGameMode);
+                        }
+                    }
+                };
+                mobBtn.addEventListener('click', handleAction);
+                mobBtn.addEventListener('touchstart', handleAction);
+            }
+            // Detect if touch screen to show mobile controls
+            const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+            const mobileControls = document.getElementById('mobileControls');
+            if (mobileControls) {
+                if (isTouchDevice) {
+                    mobileControls.classList.add('active');
+                } else {
+                    mobileControls.classList.remove('active');
+                }
+            }
+            window.addEventListener('keydown', (event) => {
+                if (event.key === 'o') {
+                    useOrbitControl = !useOrbitControl;
+                }
+                if (event.key.toLowerCase() === 'r') {
+                    const banner = document.getElementById('fishingBanner');
+                    if (gameMode !== 'fishing') {
+                        if (banner && banner.style.display !== 'none') {
+                            switchGameMode('fishing');
+                        }
+                    } else {
+                        if (window.fishingManager && typeof window.fishingManager.startCasting === 'function') {
+                            window.fishingManager.startCasting();
+                        } else {
+                            console.log('🎣 Pull rod (no fishingManager available)');
+                        }
+                    }
+                }
+                // Toggle between first person and third person camera using Key C
+                if (event.key.toLowerCase() === 'c') {
+                    if (gameMode === 'capsule') {
+                        capsuleCameraMode = capsuleCameraMode === 'first' ? 'third' : 'first';
+                        console.log(`📷 Mode caméra capsule: ${capsuleCameraMode === 'first' ? '1ère personne' : '3ème personne'}`);
+                    } else if (gameMode === 'vehicle') {
+                        vehicleManager.cameraMode = vehicleManager.cameraMode === 'first' ? 'third' : 'first';
+                        console.log(`📷 Mode caméra véhicule: ${vehicleManager.cameraMode === 'first' ? '1ère personne' : '3ème personne'}`);
+                    } else if (gameMode === 'jetski') {
+                        jetSkiManager.cameraMode = jetSkiManager.cameraMode === 'first' ? 'third' : 'first';
+                        console.log(`📷 Mode caméra jetski: ${jetSkiManager.cameraMode === 'first' ? '1ère personne' : '3ème personne'}`);
+                    }
+                }
+            });
+            // Événements du menu hamburger
+            document.getElementById('hamburgerBtn').addEventListener('click', () => {
+                const dropdown = document.getElementById('menuDropdown');
+                dropdown.classList.toggle('active');
+            });
+            // Fullscreen toggle
+            document.getElementById('fullscreenBtn').addEventListener('click', () => {
+                if (!document.fullscreenElement) {
+                    document.documentElement.requestFullscreen().catch(err => {
+                        console.error(`Error attempting to enable fullscreen: ${err.message}`);
+                    });
+                } else {
+                    if (document.exitFullscreen) {
+                        document.exitFullscreen();
+                    }
+                }
+            });
+            document.getElementById('capsuleMode').addEventListener('click', () => {
+                switchGameMode('capsule');
+                document.getElementById('menuDropdown').classList.remove('active');
+            });
+            document.getElementById('jetskiMode').addEventListener('click', () => {
+                if (jetSkiManager.vehicle) {
+                    jetSkiManager.toggleVehicleEntry(capsulePlayer, switchGameMode, true);
+                } else {
+                    switchGameMode('jetski');
+                }
+                document.getElementById('menuDropdown').classList.remove('active');
+            });
+            // Fishing trophies menu entry and controls
+            const fishingTrophiesBtn = document.getElementById('fishingTrophies');
+            if (fishingTrophiesBtn) {
+                fishingTrophiesBtn.addEventListener('click', () => {
+                    const modal = document.getElementById('fishingModal');
+                    const grid = document.getElementById('trophiesGrid');
+                    if (modal) modal.style.display = 'flex';
+                    // Exit pointer lock when opening modal
+                    document.exitPointerLock();
+                    if (grid) {
+                        grid.innerHTML = '';
+                        let trophies = [];
+                        if (window.fishingManager && typeof window.fishingManager.getTrophies === 'function') {
+                            try { trophies = window.fishingManager.getTrophies(); } catch (e) { console.warn(e); }
+                        } else {
+                            try { trophies = JSON.parse(localStorage.getItem('stillwaters_fishing_trophies') || '[]'); } catch (e) { trophies = []; }
+                        }
+                        if (!trophies || trophies.length === 0) {
+                            grid.innerHTML = '<div style="padding:18px;color:#bbb">No trophies yet</div>';
+                        } else {
+                            // Reverse to show most recent trophies first
+                            trophies.reverse().forEach(t => {
+                                const card = document.createElement('div');
+                                card.style.background = '#081018'; card.style.padding = '12px'; card.style.borderRadius = '8px'; card.style.border = '1px solid rgba(255,255,255,0.03)';
+                                
+                                let imageHtml = '';
+                                if (t.image) {
+                                    imageHtml = `<div style="display:flex; justify-content:center; margin-bottom:12px;">
+                                        <img src="${t.image}" style="width:100px; height:100px; object-fit:contain; border-radius:6px; border:1px solid rgba(255,255,255,0.1);" />
+                                    </div>`;
+                                }
+                                
+                                card.innerHTML = `
+                                    ${imageHtml}
+                                    <div style="font-weight:bold">${t.name || 'Fish'}</div>
+                                    <div style="font-size:12px;opacity:0.8">${t.timestamp || ''}</div>
+                                    <div style="margin-top:10px;font-size:14px;line-height:1.35">
+                                        <div><strong>${t.weight || 0} kg</strong> • ${t.length || 0} cm</div>
+                                        <div style="margin-top:6px;color:#8f9bb3">${t.category || 'Bronze'} Trophy</div>
+                                    </div>
+                                `;
+                                grid.appendChild(card);
+                            });
+                        }
+                        document.getElementById('menuDropdown').classList.remove('active');
+                    }
+                });
+            }
+            const fishBtn = document.getElementById('fishBtn');
+            if (fishBtn) {
+                const activateFishing = () => {
+                    const banner = document.getElementById('fishingBanner');
+                    if (gameMode !== 'fishing') {
+                        if (banner && banner.style.display !== 'none') {
+                            switchGameMode('fishing');
+                        }
+                    } else if (window.fishingManager && typeof window.fishingManager.startCasting === 'function') {
+                        window.fishingManager.startCasting();
+                    }
+                };
+                fishBtn.addEventListener('click', activateFishing);
+                fishBtn.addEventListener('touchstart', (e) => { e.preventDefault(); activateFishing(); });
+            }
+            const strikeBtn = document.getElementById('strikeBtn');
+            const reelBtn = document.getElementById('reelBtn');
+            if (strikeBtn) {
+                strikeBtn.addEventListener('click', () => {
+                    if (window.fishingManager && typeof window.fishingManager.onStrikeButton === 'function') {
+                        window.fishingManager.onStrikeButton();
+                    }
+                });
+                strikeBtn.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    if (window.fishingManager && typeof window.fishingManager.onStrikeButton === 'function') {
+                        window.fishingManager.onStrikeButton();
+                    }
+                });
+            }
+            if (reelBtn) {
+                const startReel = () => {
+                    if (window.fishingManager && typeof window.fishingManager.onReelButton === 'function') {
+                        window.fishingManager.onReelButton(true);
+                    }
+                };
+                const stopReel = () => {
+                    if (window.fishingManager && typeof window.fishingManager.onReelButton === 'function') {
+                        window.fishingManager.onReelButton(false);
+                    }
+                };
+                reelBtn.addEventListener('mousedown', (e) => { e.preventDefault(); startReel(); });
+                reelBtn.addEventListener('mouseup', (e) => { e.preventDefault(); stopReel(); });
+                reelBtn.addEventListener('mouseleave', stopReel);
+                reelBtn.addEventListener('touchstart', (e) => { e.preventDefault(); startReel(); });
+                reelBtn.addEventListener('touchend', (e) => { e.preventDefault(); stopReel(); });
+                reelBtn.addEventListener('touchcancel', stopReel);
+            }
+            const stopFishingBtn = document.getElementById('stopFishingBtn');
+            if (stopFishingBtn) {
+                const quitFishing = () => {
+                    if (typeof switchGameMode === 'function') {
+                        switchGameMode('capsule');
+                    }
+                };
+                stopFishingBtn.addEventListener('click', quitFishing);
+                stopFishingBtn.addEventListener('touchstart', (e) => { e.preventDefault(); quitFishing(); });
+            }
+            const closeFishingModal = document.getElementById('closeFishingModal');
+            if (closeFishingModal) closeFishingModal.addEventListener('click', () => {
+                const m = document.getElementById('fishingModal');
+                if (m) m.style.display = 'none';
+                // Request pointer lock when closing modal
+                if ((gameMode === 'capsule' || gameMode === 'fishing') && !capsuleCamera.enabled) {
+                    document.body.requestPointerLock();
+                }
+            });
+            function showFishCaughtScreen(fish) {
+                const overlay = document.getElementById('fishingCatchOverlay');
+                if (!overlay) return;
+                const nameEl = document.getElementById('caughtFishName');
+                const sizeEl = document.getElementById('caughtFishSize');
+                const weightEl = document.getElementById('caughtFishWeight');
+                const categoryEl = document.getElementById('caughtFishCategory');
+                const imageContainer = document.getElementById('caughtFishImageContainer');
+                const imageEl = document.getElementById('caughtFishImage');
+                
+                if (nameEl) nameEl.textContent = `Name: ${fish.name || 'Unknown'}`;
+                if (sizeEl) sizeEl.textContent = `Length: ${fish.length || 0} cm`;
+                if (weightEl) weightEl.textContent = `Weight: ${fish.weight || 0} kg`;
+                if (categoryEl) categoryEl.textContent = `Category: ${fish.category || 'Bronze'}`;
+                
+                if (imageContainer && imageEl) {
+                    if (fish.image) {
+                        imageEl.src = fish.image;
+                        imageContainer.style.display = 'flex';
+                    } else {
+                        imageContainer.style.display = 'none';
+                    }
+                }
+                
+                // Exit pointer lock when showing popup
+                document.exitPointerLock();
+                
+                overlay.style.display = 'flex';
+            }
+            function hideFishCaughtScreen() {
+                const overlay = document.getElementById('fishingCatchOverlay');
+                if (!overlay) return;
+                overlay.style.display = 'none';
+                if (window.fishingManager) {
+                    window.fishingManager.state = 'aiming';
+                }
+                // Request pointer lock when closing popup
+                if ((gameMode === 'capsule' || gameMode === 'fishing') && !capsuleCamera.enabled) {
+                    document.body.requestPointerLock();
+                }
+            }
+            const caughtFishOkBtn = document.getElementById('caughtFishOkBtn');
+            if (caughtFishOkBtn) {
+                caughtFishOkBtn.addEventListener('click', hideFishCaughtScreen);
+            }
+            // Add Enter key listener to close popup
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    const overlay = document.getElementById('fishingCatchOverlay');
+                    if (overlay && overlay.style.display === 'flex') {
+                        hideFishCaughtScreen();
+                    }
+                }
+            });
+            
+            window.showFishCaughtScreen = showFishCaughtScreen;
+            window.hideFishCaughtScreen = hideFishCaughtScreen;
+            // Événement pour le bouton de changement de caméra
+            const cameraToggleBtn = document.getElementById('cameraToggleBtn');
+            if (cameraToggleBtn) {
+                // Click event for desktop
+                cameraToggleBtn.addEventListener('click', () => {
+                    if (gameMode === 'capsule') {
+                        capsuleCameraMode = capsuleCameraMode === 'first' ? 'third' : 'first';
+                        console.log(`📷 Mode caméra capsule: ${capsuleCameraMode === 'first' ? '1ère personne' : '3ème personne'}`);
+                    } else if (gameMode === 'vehicle') {
+                        vehicleManager.cameraMode = vehicleManager.cameraMode === 'first' ? 'third' : 'first';
+                        console.log(`📷 Mode caméra véhicule: ${vehicleManager.cameraMode === 'first' ? '1ère personne' : '3ème personne'}`);
+                    } else if (gameMode === 'jetski') {
+                        jetSkiManager.cameraMode = jetSkiManager.cameraMode === 'first' ? 'third' : 'first';
+                        console.log(`📷 Mode caméra jetski: ${jetSkiManager.cameraMode === 'first' ? '1ère personne' : '3ème personne'}`);
+                    }
+                });
+                // Touch events for mobile
+                cameraToggleBtn.addEventListener('touchstart', (e) => {
+                    e.preventDefault();
+                    if (gameMode === 'capsule') {
+                        capsuleCameraMode = capsuleCameraMode === 'first' ? 'third' : 'first';
+                        console.log(`📷 Mode caméra capsule: ${capsuleCameraMode === 'first' ? '1ère personne' : '3ème personne'}`);
+                    } else if (gameMode === 'vehicle') {
+                        vehicleManager.cameraMode = vehicleManager.cameraMode === 'first' ? 'third' : 'first';
+                        console.log(`📷 Mode caméra véhicule: ${vehicleManager.cameraMode === 'first' ? '1ère personne' : '3ème personne'}`);
+                    } else if (gameMode === 'jetski') {
+                        jetSkiManager.cameraMode = jetSkiManager.cameraMode === 'first' ? 'third' : 'first';
+                        console.log(`📷 Mode caméra jetski: ${jetSkiManager.cameraMode === 'first' ? '1ère personne' : '3ème personne'}`);
+                    }
+                });
+            }
+            // Événements de souris pour le contrôle de la caméra en mode capsule
+            document.addEventListener('mousemove', handleMouseMove);
+
+            // Touch swipe camera control
+            let lastTouchX = 0;
+            let lastTouchY = 0;
+            let activeTouchId = null;
+
+            window.addEventListener('touchstart', (e) => {
+                const target = e.target;
+                if (target.closest('.joystick-base') || target.closest('.action-btn') || target.closest('.hamburger-menu') || target.closest('#fishingModal') || target.closest('#fishingCatchOverlay')) {
+                    return;
+                }
+                if (activeTouchId !== null) return;
+                
+                const touch = e.changedTouches[0];
+                activeTouchId = touch.identifier;
+                lastTouchX = touch.clientX;
+                lastTouchY = touch.clientY;
+            }, { passive: true });
+
+            window.addEventListener('touchmove', (e) => {
+                if (activeTouchId === null) return;
+                
+                let touch = null;
+                for (let i = 0; i < e.touches.length; i++) {
+                    if (e.touches[i].identifier === activeTouchId) {
+                        touch = e.touches[i];
+                        break;
+                    }
+                }
+                if (!touch) return;
+                
+                const deltaX = touch.clientX - lastTouchX;
+                const deltaY = touch.clientY - lastTouchY;
+                lastTouchX = touch.clientX;
+                lastTouchY = touch.clientY;
+                
+                const sensitivity = 0.005;
+                
+                if (gameMode === 'capsule' || gameMode === 'fishing') {
+                    capsuleCamera.yaw -= deltaX * sensitivity;
+                    capsuleCamera.pitch += deltaY * sensitivity;
+                    capsuleCamera.pitch = THREE.MathUtils.clamp(capsuleCamera.pitch, -Math.PI / 3, Math.PI / 3);
+                    
+                    if (capsuleCamera.yaw > Math.PI * 2) capsuleCamera.yaw -= Math.PI * 2;
+                    if (capsuleCamera.yaw < -Math.PI * 2) capsuleCamera.yaw += Math.PI * 2;
+                } else if (gameMode === 'jetski') {
+                    jetSkiManager.cameraYaw -= deltaX * sensitivity;
+                    jetSkiManager.cameraPitch -= deltaY * sensitivity;
+                    jetSkiManager.cameraPitch = THREE.MathUtils.clamp(jetSkiManager.cameraPitch, -Math.PI / 3, Math.PI / 3);
+                    jetSkiManager.lastCameraMoveTime = performance.now();
+                }
+            }, { passive: true });
+
+            window.addEventListener('touchend', (e) => {
+                if (activeTouchId === null) return;
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    if (e.changedTouches[i].identifier === activeTouchId) {
+                        activeTouchId = null;
+                        break;
+                    }
+                }
+            });
+            window.addEventListener('touchcancel', (e) => {
+                if (activeTouchId === null) return;
+                for (let i = 0; i < e.changedTouches.length; i++) {
+                    if (e.changedTouches[i].identifier === activeTouchId) {
+                        activeTouchId = null;
+                        break;
+                    }
+                }
+            });
+            document.addEventListener('pointerlockchange', () => {
+                if (document.pointerLockElement === document.body) {
+                    capsuleCamera.enabled = true;
+                    console.log('🖱️ Pointer lock activé');
+                } else {
+                    capsuleCamera.enabled = false;
+                    console.log('🖱️ Pointer lock désactivé');
+                }
+            });
+            document.addEventListener('click', () => {
+                if ((gameMode === 'capsule' || gameMode === 'fishing') && !capsuleCamera.enabled) { 
+                    document.body.requestPointerLock();
+                }
+            });
+            document.addEventListener('keydown', (event) => {
+                if (event.key === 'Escape' && capsuleCamera.enabled) {
+                    document.exitPointerLock();
+                }
+                // Exit fishing mode with Q key - same as clicking capsuleMode button
+                if (event.key === 'q' || event.key === 'Q') {
+                    if (gameMode === 'fishing' && typeof switchGameMode === 'function') {
+                        switchGameMode('capsule');
+                    }
+                }
+            });
+            document.addEventListener('mousedown', (event) => {
+                if (event.button !== 0) return;
+                if (gameMode === 'fishing' && window.fishingManager && typeof window.fishingManager.onFishingMouseDown === 'function') {
+                    event.preventDefault();
+                    window.fishingManager.onFishingMouseDown();
+                }
+            });
+            document.addEventListener('mouseup', (event) => {
+                if (event.button !== 0) return;
+                if (gameMode === 'fishing' && window.fishingManager && typeof window.fishingManager.onFishingMouseUp === 'function') {
+                    event.preventDefault();
+                    window.fishingManager.onFishingMouseUp();
+                }
+            });
+            window.addEventListener('resize', onWindowResize);
+        }
+        const DISPLACEMENT = 37.5; // Max height of terrain in world units (adjust based on actual height map range)
+        const OFFSET = -20;
+        function createDummyTexture() {
+            // Create a white texture (no roads/buildings until real textures load)
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 256;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, 256, 256);
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.needsUpdate = true;
+            return texture;
+        }
+        function loadTerrain() {
+            textureLoader.load(
+                heightMapPath,
+                (texture) => {
+                    terrainManager.setupHeightMapCollision(texture);
+                    const geometry = new THREE.PlaneGeometry(1000, 1000, 256, 256);
+                    const pos = geometry.attributes.position;
+                    const colors = [];
+                    for (let i = 0; i < pos.count; i++) {
+                        const x = pos.getX(i);
+                        const y = pos.getY(i);
+                        const u = (x + 500) / 1000;
+                        const v = (y + 500) / 1000;
+                        const px = Math.floor(u * (terrainManager.canvas.width - 1));
+                        const py = Math.floor(v * (terrainManager.canvas.height - 1));
+                        const pixelIndex = (py * terrainManager.canvas.width + px) * 4;
+                        const h = terrainManager.heightData[pixelIndex] / 255;
+                        const finalHeight = h * DISPLACEMENT;
+                        pos.setZ(i, finalHeight);
+                        let vertexColor = new THREE.Color();
+                        const grassColor = new THREE.Color(0x6f8f52);
+                        const sandColor = new THREE.Color(0xe1cd9d);
+                        const lakeLevel = 0.522;
+                        const beachEnd = 0.560;
+                        if (h <= lakeLevel) {
+                            vertexColor.copy(sandColor);
+                        } else if (h >= beachEnd) {
+                            vertexColor.copy(grassColor);
+                        } else {
+                            const alpha = (h - lakeLevel) / (beachEnd - lakeLevel);
+                            vertexColor.copy(sandColor).lerp(grassColor, alpha);
+                        }
+                        colors.push(vertexColor.r, vertexColor.g, vertexColor.b);
+                    }
+                    pos.needsUpdate = true;
+                    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+                    geometry.computeVertexNormals();
+                    const material = new THREE.MeshStandardMaterial({
+                        vertexColors: true,
+                        roughness: 1.0,
+                        metalness: 0.0
+                    });
+                    terrainMesh = new THREE.Mesh(geometry, material);
+                    terrainMesh.rotation.x = -Math.PI / 2;
+                    terrainMesh.position.y = OFFSET;
+                    terrainMesh.receiveShadow = true;
+                    terrainMesh.castShadow = true;
+                    terrainMesh.scale.y = -1;
+                    terrainMesh.material.side = THREE.DoubleSide;
+                    scene.add(terrainMesh);
+                    isTerrainLoaded = true;
+                    environmentManager.createRoadOverlay();
+                    environmentManager.createBeachOverlay();
+                    environmentManager.createBuildingOverlay(refreshCollisionObjects);
+                    environmentManager.createTreeOverlay(refreshCollisionObjects);
+                    initializeGameMode();
+                    console.log('✅ Terrain loaded with height-blended beach + shadows');
+                },
+                undefined,
+                (error) => {
+                    console.error('❌ Error loading terrain:', error);
+                }
+            );
+        }
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+        // Helper to calculate terrain height at any specific world coordinate
+        let debugLine;
+        function getRawTerrainValue(worldPos) {
+            return terrainManager.getRawTerrainValue(worldPos);
+        }
+        function isInLake(worldPos) {
+            return terrainManager.isInLake(worldPos);
+        }
+        function getTerrainHeightAt(worldPos) {
+            return terrainManager.getTerrainHeightAt(worldPos);
+        }
+        function getGroundHeightAt(worldPos) {
+            return terrainManager.getGroundHeightAt(worldPos);
+        }
+        function getTerrainHeightAtForBuildings(worldPos) {
+            return terrainManager.getTerrainHeightAtForBuildings(worldPos);
+        }
+        // Fishing UI updater: shows/hides HUD, reticle and buttons and notifies fishingManager
+        function updateFishingUI(delta) {
+            const hud = document.getElementById('fishingHUD');
+            const ret = document.getElementById('aimReticle');
+            const banner = document.getElementById('fishingBanner');
+            const fishBtn = document.getElementById('fishBtn');
+            const strikeBtn = document.getElementById('strikeBtn');
+            const reelBtn = document.getElementById('reelBtn');
+            const stopFishingBtn = document.getElementById('stopFishingBtn');
+            const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+            if (gameMode === 'fishing') {
+                if (hud) hud.style.display = 'block';
+                if (ret) ret.style.display = 'block';
+                if (banner) banner.style.display = 'none';
+                if (fishBtn) fishBtn.style.display = 'none';
+                if (stopFishingBtn) stopFishingBtn.style.display = 'block';
+                if (strikeBtn) strikeBtn.style.display = 'block';
+                if (reelBtn) reelBtn.style.display = 'block';
+                
+                if (window.fishingManager) {
+                    if (!window.fishingManager._entered && typeof window.fishingManager.enterFishingMode === 'function') {
+                        try { window.fishingManager.enterFishingMode({ player: capsulePlayer, camera }); } catch (e) { console.warn('fishingManager.enterFishingMode failed', e); }
+                        window.fishingManager._entered = true;
+                    }
+                    // Mirror simple HUD values if available
+                    if (typeof window.fishingManager.getState === 'function') {
+                        const s = window.fishingManager.getState();
+                        const stateEl = document.getElementById('fishingState'); if (stateEl) stateEl.textContent = s || 'idle';
+                    }
+                    if (typeof window.fishingManager.getDistance === 'function') {
+                        const d = window.fishingManager.getDistance();
+                        const distEl = document.getElementById('fishingDistance'); if (distEl) distEl.textContent = d.toFixed(1) + 'm';
+                    }
+                    if (typeof window.fishingManager.getTension === 'function') {
+                        const t = window.fishingManager.getTension(); const tEl = document.getElementById('fishingTension'); if (tEl) tEl.value = Math.round(t*100);
+                    }
+                }
+            } else {
+                if (hud) hud.style.display = 'none';
+                if (ret) ret.style.display = 'none';
+                if (fishBtn) fishBtn.style.display = (isTouchDevice && banner && banner.style.display !== 'none') ? 'block' : 'none';
+                if (strikeBtn) strikeBtn.style.display = 'none';
+                if (reelBtn) reelBtn.style.display = 'none';
+                if (stopFishingBtn) stopFishingBtn.style.display = 'none';
+                if (window.fishingManager && window.fishingManager._entered) {
+                    if (typeof window.fishingManager.exitFishingMode === 'function') {
+                        try { window.fishingManager.exitFishingMode(); } catch (e) { console.warn('fishingManager.exitFishingMode failed', e); }
+                    }
+                    window.fishingManager._entered = false;
+                }
+            }
+        }
+        function animate() {
+            requestAnimationFrame(animate);
+            const delta = clock.getDelta();
+            // Gérer selon le mode de jeu
+            if (gameMode === 'capsule') {
+                // Mode capsule - physique du personnage et caméra
+                updateCapsulePhysics(delta);
+                updateCapsuleCamera();
+                // Désactiver les contrôles orbitaux en mode capsule
+                controls.enabled = false;
+                // Validate proximity alerts for the vehicles
+                if (capsulePlayer) {
+                    vehicleManager.checkProximity(capsulePlayer.position);
+                    jetSkiManager.checkProximity(capsulePlayer.position);
+                }
+            } else if (gameMode === 'fishing') {
+                // Mode pêche - utiliser la physique capsule et caméra de personnage
+                updateCapsulePhysics(delta);
+                updateCapsuleCamera();
+                controls.enabled = false;
+                if (capsulePlayer) {
+                    vehicleManager.checkProximity(capsulePlayer.position);
+                    jetSkiManager.checkProximity(capsulePlayer.position);
+                }
+            } else if (gameMode === 'vehicle') {
+                // Mode véhicule - physique du sidebyside UTV
+                vehicleManager.updateVehiclePhysics(delta);
+                // Désactiver les contrôles orbitaux en mode véhicule
+                controls.enabled = false;
+                if (vehicleManager.vehicle) {
+                    if (vehicleManager.cameraMode === 'first') {
+                        // First-person driver seat camera view
+                        const vehicle = vehicleManager.vehicle;
+                        // local seat offset rotated by vehicle quaternion (driver's seat is on the left side, which maps to positive X)
+                        const seatOffset = vehicleManager.firstPersonOffset.clone().applyQuaternion(vehicle.quaternion);
+                        const eyePos = vehicle.position.clone().add(seatOffset);
+                        // local forward vector (+Z) rotated by vehicle quaternion
+                        const localForward = new THREE.Vector3(0, 0, 1).applyQuaternion(vehicle.quaternion);
+                        camera.position.copy(eyePos);
+                        camera.lookAt(eyePos.clone().addScaledVector(localForward, 10));
+                    } else {
+                        // Smooth driving camera follow logic behind UTV (Third-person)
+                        const forwardX = Math.sin(vehicleManager.heading);
+                        const forwardZ = Math.cos(vehicleManager.heading);
+                        // Camera position: 9m behind, 3.8m up
+                        const camTargetPos = new THREE.Vector3(
+                            vehicleManager.vehicle.position.x - forwardX * 9,
+                            vehicleManager.vehicle.position.y + 3.8,
+                            vehicleManager.vehicle.position.z - forwardZ * 9
+                        );
+                        camera.position.lerp(camTargetPos, 0.08);
+                        // Look slightly in front of the vehicle center
+                        const lookTarget = new THREE.Vector3(
+                            vehicleManager.vehicle.position.x + forwardX * 2,
+                            vehicleManager.vehicle.position.y + 1.2,
+                            vehicleManager.vehicle.position.z + forwardZ * 2
+                        );
+                        camera.lookAt(lookTarget);
+                    }
+                }
+            } else if (gameMode === 'jetski') {
+                jetSkiManager.updatePhysics(delta);
+                controls.enabled = false;
+                if (jetSkiManager.vehicle) {
+                    if (jetSkiManager.cameraMode === 'first') {
+                        const vehicle = jetSkiManager.vehicle;
+                        const seatOffset = jetSkiManager.firstPersonOffset.clone().applyQuaternion(vehicle.quaternion);
+                        const eyePos = vehicle.position.clone().add(seatOffset);
+                        // Use cameraYaw and cameraPitch for free look
+                        const lookDir = new THREE.Vector3(0, 0, 1);
+                        const euler = new THREE.Euler(jetSkiManager.cameraPitch, jetSkiManager.cameraYaw, 0, 'YXZ');
+                        lookDir.applyEuler(euler);
+                        camera.position.copy(eyePos);
+                        camera.lookAt(eyePos.clone().addScaledVector(lookDir, 10));
+                    } else {
+                        // Third-person free look
+                        const distance = 6;
+                        const verticalOffset = distance * Math.sin(jetSkiManager.cameraPitch);
+                        const horizontalDistance = distance * Math.cos(jetSkiManager.cameraPitch);
+                        const cameraOffsetX = -horizontalDistance * Math.sin(jetSkiManager.cameraYaw);
+                        const cameraOffsetZ = -horizontalDistance * Math.cos(jetSkiManager.cameraYaw);
+                        const camTargetPos = new THREE.Vector3(
+                            jetSkiManager.vehicle.position.x + cameraOffsetX,
+                            jetSkiManager.vehicle.position.y + 2.5 + verticalOffset,
+                            jetSkiManager.vehicle.position.z + cameraOffsetZ
+                        );
+                        camera.position.lerp(camTargetPos, 0.15);
+                        const lookTarget = jetSkiManager.vehicle.position.clone();
+                        lookTarget.y += 1.0;
+                        camera.lookAt(lookTarget);
+                    }
+                }
+            }
+
+            if (window.soundManager && typeof window.soundManager.updateListenerFromCamera === 'function') {
+                window.soundManager.updateListenerFromCamera(camera);
+            }
+
+            // 2. Animate water (commun aux modes de jeu)
+            if (water && water.material.uniforms['time']) {
+                water.material.uniforms['time'].value += delta;
+            }
+            // Only update if the model has finished loading and controller exists
+            if (eagleFlightController) {
+                eagleFlightController.update(delta);
+            }
+            // Update fishing UI state and fishing manager each frame
+            try { updateFishingUI(delta); } catch (e) { /* ignore */ }
+            if (window.fishingManager && typeof window.fishingManager.update === 'function') {
+                try { window.fishingManager.update(delta); } catch (e) { console.warn('fishingManager.update error', e); }
+            }
+            //updateWakeMesh(delta);
+            renderer.render(scene, camera);
+        }
+        function updateWakeMesh(delta) {
+            // Wake mesh functionality removed
+            return;
+        }
+    </script>
+</body>
+</html>
