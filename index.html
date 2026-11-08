@@ -610,6 +610,68 @@
         let capsuleCollisionObjects = [];
         const capsuleRadius = 0.45;
         const capsuleCollisionPadding = 0.15;
+        // Fence collision uses a spatial hash of centerline segments. This keeps
+        // the barrier continuous without adding every visible picket as a collider.
+        const fenceCollisionCellSize = 10;
+        const fenceCollisionCells = new Map();
+        let fenceCollisionFrame = 0;
+        function addFenceCollisionSegment(a, b) {
+            const segment = { ax: a.x, az: a.z, bx: b.x, bz: b.z, lastFrame: -1 };
+            const minCellX = Math.floor(Math.min(a.x, b.x) / fenceCollisionCellSize);
+            const maxCellX = Math.floor(Math.max(a.x, b.x) / fenceCollisionCellSize);
+            const minCellZ = Math.floor(Math.min(a.z, b.z) / fenceCollisionCellSize);
+            const maxCellZ = Math.floor(Math.max(a.z, b.z) / fenceCollisionCellSize);
+            for (let cellX = minCellX; cellX <= maxCellX; cellX++) {
+                for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ++) {
+                    const key = `${cellX},${cellZ}`;
+                    let cell = fenceCollisionCells.get(key);
+                    if (!cell) fenceCollisionCells.set(key, cell = []);
+                    cell.push(segment);
+                }
+            }
+        }
+        function resolveFenceCollisions() {
+            if (!capsulePlayer || fenceCollisionCells.size === 0) return;
+            const playerPos = capsulePlayer.position;
+            const radius = capsuleRadius + (capsuleCollisionPadding || 0.1) + 0.04;
+            const cellX = Math.floor(playerPos.x / fenceCollisionCellSize);
+            const cellZ = Math.floor(playerPos.z / fenceCollisionCellSize);
+            const frame = ++fenceCollisionFrame;
+            for (let x = cellX - 1; x <= cellX + 1; x++) {
+                for (let z = cellZ - 1; z <= cellZ + 1; z++) {
+                    const segments = fenceCollisionCells.get(`${x},${z}`);
+                    if (!segments) continue;
+                    for (const segment of segments) {
+                        if (segment.lastFrame === frame) continue;
+                        segment.lastFrame = frame;
+                        const dx = segment.bx - segment.ax;
+                        const dz = segment.bz - segment.az;
+                        const lengthSq = dx * dx + dz * dz;
+                        if (lengthSq < 0.0025) continue;
+                        const t = THREE.MathUtils.clamp(((playerPos.x - segment.ax) * dx + (playerPos.z - segment.az) * dz) / lengthSq, 0, 1);
+                        const closestX = segment.ax + dx * t;
+                        const closestZ = segment.az + dz * t;
+                        const diffX = playerPos.x - closestX;
+                        const diffZ = playerPos.z - closestZ;
+                        const distSq = diffX * diffX + diffZ * diffZ;
+                        if (distSq >= radius * radius) continue;
+                        const distance = Math.sqrt(distSq);
+                        const overlap = radius - distance;
+                        if (distance > 1e-5) {
+                            playerPos.x += diffX / distance * overlap;
+                            playerPos.z += diffZ / distance * overlap;
+                        } else {
+                            const invLength = 1 / Math.sqrt(lengthSq);
+                            const side = (playerPos.x - segment.ax) * (-dz * invLength) + (playerPos.z - segment.az) * (dx * invLength) < 0 ? -1 : 1;
+                            playerPos.x += -dz * invLength * overlap * side;
+                            playerPos.z += dx * invLength * overlap * side;
+                        }
+                        capsulePhysics.velocity.x = 0;
+                        capsulePhysics.velocity.z = 0;
+                    }
+                }
+            }
+        }
         function registerCollisionObject(object) { 
             if (object && !capsuleCollisionObjects.includes(object)) {
                 // Ensure BVH is computed for precise raycast collisions
@@ -902,6 +964,8 @@
                     capsulePhysics.velocity.z = 0;
                 }
             }
+
+            resolveFenceCollisions();
 
         }
         const capsuleSpeed = 25;
@@ -3852,6 +3916,7 @@
                             const dx = b.x - a.x, dz = b.z - a.z;
                             const length = Math.hypot(dx, dz);
                             if (length < 0.05 || length > 8) continue;
+                            addFenceCollisionSegment(a, b);
                             const angle = Math.atan2(dz, dx);
                             const midpoint = new THREE.Vector3((a.x + b.x) / 2, 0, (a.z + b.z) / 2);
                             midpoint.y = terrainManager.getGroundHeightAt(midpoint);
