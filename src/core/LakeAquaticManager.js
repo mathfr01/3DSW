@@ -127,13 +127,16 @@ export class LakeAquaticManager {
             jumpPhase: 0,
             jumpDuration: 1.2,
             jumpOrigin: new THREE.Vector3(),
-            jumpPeak: 2.5 + Math.random() * 1.5,
+            // Reduce jump peak to ~5% of prior value to produce gentle splashes
+            jumpPeak: (2.5 + Math.random() * 1.5) * 0.05,
             jumpDir: new THREE.Vector3()
         };
 
         this._loadFishModel(species.file, (model) => {
             const mesh = model.clone();
-            mesh.scale.setScalar(species.scale);
+            // Make fish noticeably larger per user request (scale multiplier)
+            const FISH_SCALE_MULTIPLIER = 5.0;
+            mesh.scale.setScalar(species.scale * FISH_SCALE_MULTIPLIER);
             mesh.position.copy(state.pos);
             mesh.position.y = this.waterLevel - state.depth;
             this.scene.add(mesh);

@@ -12,6 +12,7 @@ export class ZipLineManager {
         this.proximityDistance = 15.0; // Tower is big, need a larger proximity trigger distance
         this.gravity = 9.81; // m/s^2 down
         this.friction = 0.5; // Drag on the cable
+        this.releaseDistanceBeforePost = 5.0; // Detach the player a few meters before the final post
 
         // Zipline properties
         this.curve = null;
@@ -216,7 +217,7 @@ export class ZipLineManager {
                 }
 
                 if (setCameraModeCallback) {
-                    setCameraModeCallback('first');
+                    setCameraModeCallback('third');
                 }
 
                 if (capsuleCameraObj) {
@@ -230,6 +231,13 @@ export class ZipLineManager {
         }
     }
 
+    getReleasePoint() {
+        if (!this.curve) return this.endPos.clone();
+        const curveLength = this.curve.getLength();
+        const releaseProgress = Math.max(0, 1 - (this.releaseDistanceBeforePost / Math.max(curveLength, 1)));
+        return this.curve.getPointAt(releaseProgress);
+    }
+
     exitZipline(capsulePlayer, switchGameModeCallback) {
         if (!this.isZiplining) return;
         this.isZiplining = false;
@@ -237,9 +245,9 @@ export class ZipLineManager {
             capsulePlayer.remove(this.strapsMesh);
             this.strapsMesh.visible = false;
             
-            // Put on ground at the end
-            const exitPos = this.endPos.clone();
-            const groundY = terrainManager.getTerrainHeightAt(exitPos);
+            // Release before the final post so the player lands a few meters earlier
+            const exitPos = this.getReleasePoint();
+            const groundY = terrainManager.getTerrainHeightAt({ x: exitPos.x, z: exitPos.z });
             exitPos.y = groundY + 1.0;
             capsulePlayer.position.copy(exitPos);
         }
@@ -270,8 +278,9 @@ export class ZipLineManager {
         
         this.progress += progressDelta;
 
-        if (this.progress >= 1.0) {
-            this.progress = 1.0;
+        const releaseProgress = Math.max(0, 1 - (this.releaseDistanceBeforePost / Math.max(this.curve.getLength(), 1)));
+        if (this.progress >= releaseProgress) {
+            this.progress = releaseProgress;
             this.exitZipline(capsulePlayer, switchGameModeCallback);
             return;
         }

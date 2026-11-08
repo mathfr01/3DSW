@@ -73,6 +73,18 @@ export class SoundManager {
             footstepBeach: 'sounds/footstep_beach.mp3',
             swimming: 'sounds/swiming.mp3',
 
+            // Ambient sounds provided by user
+            wind: 'sounds/Wind_leafs.mp3',
+            bird1: 'sounds/red-winged-blackbird.mp3',
+            bird2: 'sounds/mourningdove.mp3',
+            bird3: 'sounds/AmericanRobin1.mp3',
+            bird4: 'sounds/AmericanRobin2.mp3',
+            bird5: 'sounds/AmericanRobin3.mp3',
+            bird6: 'sounds/AmericanRobin4.mp3',
+            bird7: 'sounds/CedarWaxwings1.mp3',
+            bird8: 'sounds/CedarWaxwings2.mp3',
+            bird9: 'sounds/CedarWaxwings3.mp3',
+
             //Eagle Cry
             eagleCry: 'sounds/eaglecry.mp3',
         };

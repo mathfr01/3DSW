@@ -126,10 +126,29 @@ function cloneTreeModelWithTint(treeModel, foliageMaterial) {
     return tree;
 }
 
+// Reusable math objects for tree wind animation loop to avoid garbage collection
+const _windPos = new THREE.Vector3();
+const _windEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+const _windQuaternion = new THREE.Quaternion();
+const _windScale = new THREE.Vector3();
+const _windTreeMatrix = new THREE.Matrix4();
+const _windLeafMatrix = new THREE.Matrix4();
+const _windFoliageRotated = new THREE.Matrix4();
+const _windFoliageEuler = new THREE.Euler(0, 0, 0, 'XYZ');
+
 export class EnvironmentManager {
     constructor(scene, terrainManager) {
         this.scene = scene;
         this.terrainManager = terrainManager;
+        this.treeDataList = [];
+        this.trunkMeshNear = null;
+        this.trunkMeshFar = null;
+        this.foliageMeshesNear = null;
+        this.foliageMeshesFar = null;
+        this.foliageGeometries = null;
+        this.foliageLocalMatrices = null;
+        this.foliageMaterials = null;
+        this.lastTreeWindUpdate = -Infinity;
     }
 
     createRoadOverlay() {
@@ -374,18 +393,23 @@ export class EnvironmentManager {
             this.scene.remove(window.treeGroup);
         }
 
+        this.treeDataList = [];
+
         const treeGroup = new THREE.Group();
 
         const imgW = this.terrainManager.treesCanvas.width;
         const imgH = this.terrainManager.treesCanvas.height;
         const terrainSize = 1000;
-        const maxTrees = 3000;
-        const sampleRate = 12;
+        const maxTrees = 1500;
         let treeCount = 0;
 
         const { trunkGeometry, foliageGeometries, foliageLocalMatrices } = createTreePrototype();
+        this.foliageGeometries = foliageGeometries;
+        this.foliageLocalMatrices = foliageLocalMatrices;
+
         const trunkMaterial = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
         const foliageMaterials = Array.from({ length: 5 }, () => new THREE.MeshLambertMaterial({ color: getRandomTreeGreen() }));
+        this.foliageMaterials = foliageMaterials;
 
         const trunkMeshNear = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, maxTrees);
         trunkMeshNear.castShadow = true;
@@ -394,6 +418,9 @@ export class EnvironmentManager {
         const trunkMeshFar = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, maxTrees);
         trunkMeshFar.castShadow = false;
         trunkMeshFar.receiveShadow = false;
+
+        this.trunkMeshNear = trunkMeshNear;
+        this.trunkMeshFar = trunkMeshFar;
 
         const foliageMeshesNear = foliageMaterials.map((material) =>
             foliageGeometries.map((geometry) => {
@@ -412,6 +439,9 @@ export class EnvironmentManager {
                 return mesh;
             })
         );
+
+        this.foliageMeshesNear = foliageMeshesNear;
+        this.foliageMeshesFar = foliageMeshesFar;
 
         const nearCounts = new Array(foliageMaterials.length).fill(0);
         const farCounts = new Array(foliageMaterials.length).fill(0);
@@ -434,56 +464,69 @@ export class EnvironmentManager {
             return brightness > 200;
         };
 
-        for (let y = 0; y < imgH; y += sampleRate) {
-            for (let x = 0; x < imgW; x += sampleRate) {
-                if (!isTreePixel(x, y)) continue;
-
-                const worldX = ((x + 0.5) / imgW) * terrainSize - terrainSize / 2;
-                const worldZ = ((y + 0.5) / imgH) * terrainSize - terrainSize / 2;
-                const terrainY = this.terrainManager.getTerrainHeightAt({ x: worldX, z: worldZ });
-                const scale = 0.7 + Math.random() * 0.6;
-                const rotationY = Math.random() * Math.PI * 2;
-                const paletteIndex = Math.floor(Math.random() * foliageMaterials.length);
-                const isNear = Math.hypot(worldX, worldZ) <= shadowDistance;
-
-                position.set(worldX, terrainY, worldZ);
-                quaternion.setFromAxisAngle(upAxis, rotationY);
-                scaleVector.set(scale, scale, scale);
-                treeMatrix.compose(position, quaternion, scaleVector);
-
-                if (isNear) {
-                    trunkMeshNear.setMatrixAt(trunkNearCount, treeMatrix);
-                    trunkNearCount += 1;
-                } else {
-                    trunkMeshFar.setMatrixAt(trunkFarCount, treeMatrix);
-                    trunkFarCount += 1;
-                }
-
-                const targetFoliageMeshes = isNear ? foliageMeshesNear : foliageMeshesFar;
-                const treeIndex = isNear ? nearCounts[paletteIndex] : farCounts[paletteIndex];
-                for (let partIndex = 0; partIndex < foliageGeometries.length; partIndex++) {
-                    leafMatrix.multiplyMatrices(treeMatrix, foliageLocalMatrices[partIndex]);
-                    targetFoliageMeshes[paletteIndex][partIndex].setMatrixAt(treeIndex, leafMatrix);
-                }
-                if (isNear) nearCounts[paletteIndex] += 1;
-                else farCounts[paletteIndex] += 1;
-
-                treeCount++;
-                if (treeCount >= maxTrees) break;
+        // Collect all valid tree pixels, then shuffle & sample to avoid row/grid placement
+        const validPixels = [];
+        for (let y = 0; y < imgH; y++) {
+            for (let x = 0; x < imgW; x++) {
+                if (isTreePixel(x, y)) validPixels.push({ x, y });
             }
-            if (treeCount >= maxTrees) break;
         }
 
-        const addTreeInstance = (worldX, worldZ, worldY) => {
-            const scale = 0.8;
+        // Shuffle Fisher-Yates
+        for (let i = validPixels.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            const tmp = validPixels[i];
+            validPixels[i] = validPixels[j];
+            validPixels[j] = tmp;
+        }
+
+        if (!window.treeColliders) window.treeColliders = [];
+
+        const maxToPlace = Math.min(maxTrees, validPixels.length);
+        for (let idx = 0; idx < maxToPlace; idx++) {
+            const px = validPixels[idx].x;
+            const py = validPixels[idx].y;
+
+            // Add small random jitter to scatter trees within the pixel area
+            const jitterX = (Math.random() - 0.5) * (terrainSize / imgW);
+            const jitterZ = (Math.random() - 0.5) * (terrainSize / imgH);
+
+            const worldX = ((px + 0.5) / imgW) * terrainSize - terrainSize / 2 + jitterX;
+            const worldZ = ((py + 0.5) / imgH) * terrainSize - terrainSize / 2 + jitterZ;
+            const terrainY = this.terrainManager.getTerrainHeightAt({ x: worldX, z: worldZ });
+
+            // Increase tree sizes by ~75% on average for taller trees
+            const baseScale = 0.7 + Math.random() * 0.6; // previous range
+            const scale = baseScale * 1.75;
+
             const rotationY = Math.random() * Math.PI * 2;
             const paletteIndex = Math.floor(Math.random() * foliageMaterials.length);
             const isNear = Math.hypot(worldX, worldZ) <= shadowDistance;
 
-            position.set(worldX, worldY, worldZ);
+            position.set(worldX, terrainY, worldZ);
             quaternion.setFromAxisAngle(upAxis, rotationY);
             scaleVector.set(scale, scale, scale);
             treeMatrix.compose(position, quaternion, scaleVector);
+            
+            // Register for collision: the trunk is roughly a cylinder.
+            // Cylinder base radius in prototype is 0.5, so collision radius is 0.5 * scale.
+            window.treeColliders.push({ x: worldX, z: worldZ, radius: 0.5 * scale });
+
+            const trunkIndex = isNear ? trunkNearCount : trunkFarCount;
+            const treeIndex = isNear ? nearCounts[paletteIndex] : farCounts[paletteIndex];
+
+            this.treeDataList.push({
+                worldX,
+                terrainY,
+                worldZ,
+                scale,
+                rotationY,
+                paletteIndex,
+                isNear,
+                trunkIndex,
+                treeIndex,
+                phase: worldX * 0.03 + worldZ * 0.03
+            });
 
             if (isNear) {
                 trunkMeshNear.setMatrixAt(trunkNearCount, treeMatrix);
@@ -494,17 +537,15 @@ export class EnvironmentManager {
             }
 
             const targetFoliageMeshes = isNear ? foliageMeshesNear : foliageMeshesFar;
-            const treeIndex = isNear ? nearCounts[paletteIndex] : farCounts[paletteIndex];
             for (let partIndex = 0; partIndex < foliageGeometries.length; partIndex++) {
                 leafMatrix.multiplyMatrices(treeMatrix, foliageLocalMatrices[partIndex]);
                 targetFoliageMeshes[paletteIndex][partIndex].setMatrixAt(treeIndex, leafMatrix);
             }
             if (isNear) nearCounts[paletteIndex] += 1;
             else farCounts[paletteIndex] += 1;
-            treeCount += 1;
-        };
 
-        addTreeInstance(199, -104, this.terrainManager.getTerrainHeightAt({ x: 199, z: -104 }));
+            treeCount++;
+        }
 
         trunkMeshNear.count = trunkNearCount;
         trunkMeshFar.count = trunkFarCount;
@@ -528,7 +569,6 @@ export class EnvironmentManager {
         foliageMeshesNear.forEach((meshes) => meshes.forEach((mesh) => treeGroup.add(mesh)));
         foliageMeshesFar.forEach((meshes) => meshes.forEach((mesh) => treeGroup.add(mesh)));
 
-
         this.scene.add(treeGroup);
         window.treeGroup = treeGroup;
 
@@ -538,4 +578,66 @@ export class EnvironmentManager {
 
         console.log(`✅ Generated ${treeCount} trees from mask`);
     }
+
+    updateTrees(time) {
+        if (!this.treeDataList || this.treeDataList.length === 0) return;
+        // Wind motion is subtle; update it at 20 Hz instead of every render
+        // frame to reduce CPU work on lower-powered devices.
+        if (time - this.lastTreeWindUpdate < 0.05) return;
+        this.lastTreeWindUpdate = time;
+
+        const count = this.treeDataList.length;
+        for (let i = 0; i < count; i++) {
+            const tree = this.treeDataList[i];
+            // Distant trees are static already and do not need per-frame matrices.
+            if (!tree.isNear) continue;
+            const phase = tree.phase;
+
+            // Multi-frequency gentle wind simulation
+            const windX = Math.sin(time * 1.2 + phase) * 0.020 + Math.sin(time * 2.3 + phase * 1.7) * 0.008;
+            const windZ = Math.cos(time * 0.95 + phase * 0.8) * 0.018 + Math.sin(time * 1.8 + phase * 2.1) * 0.007;
+
+            _windPos.set(tree.worldX, tree.terrainY, tree.worldZ);
+            _windEuler.set(windX, tree.rotationY, windZ, 'YXZ');
+            _windQuaternion.setFromEuler(_windEuler);
+            _windScale.set(tree.scale, tree.scale, tree.scale);
+            _windTreeMatrix.compose(_windPos, _windQuaternion, _windScale);
+
+            if (tree.isNear) {
+                this.trunkMeshNear.setMatrixAt(tree.trunkIndex, _windTreeMatrix);
+            } else {
+                this.trunkMeshFar.setMatrixAt(tree.trunkIndex, _windTreeMatrix);
+            }
+
+            const targetFoliageMeshes = tree.isNear ? this.foliageMeshesNear : this.foliageMeshesFar;
+            
+            for (let partIndex = 0; partIndex < this.foliageLocalMatrices.length; partIndex++) {
+                const flutterX = Math.sin(time * 2.7 + phase * 3.0 + partIndex * 1.4) * 0.004;
+                const flutterZ = Math.cos(time * 2.1 + phase * 2.2 + partIndex * 1.1) * 0.004;
+                _windFoliageEuler.set(flutterX, 0, flutterZ);
+                _windFoliageRotated.makeRotationFromEuler(_windFoliageEuler);
+                _windFoliageRotated.premultiply(this.foliageLocalMatrices[partIndex]);
+
+                _windLeafMatrix.multiplyMatrices(_windTreeMatrix, _windFoliageRotated);
+                targetFoliageMeshes[tree.paletteIndex][partIndex].setMatrixAt(tree.treeIndex, _windLeafMatrix);
+            }
+        }
+
+        if (this.trunkMeshNear) this.trunkMeshNear.instanceMatrix.needsUpdate = true;
+        if (this.trunkMeshFar) this.trunkMeshFar.instanceMatrix.needsUpdate = true;
+
+        if (this.foliageMaterials && this.foliageGeometries) {
+            for (let matIdx = 0; matIdx < this.foliageMaterials.length; matIdx++) {
+                for (let partIdx = 0; partIdx < this.foliageGeometries.length; partIdx++) {
+                    if (this.foliageMeshesNear && this.foliageMeshesNear[matIdx] && this.foliageMeshesNear[matIdx][partIdx]) {
+                        this.foliageMeshesNear[matIdx][partIdx].instanceMatrix.needsUpdate = true;
+                    }
+                    if (this.foliageMeshesFar && this.foliageMeshesFar[matIdx] && this.foliageMeshesFar[matIdx][partIdx]) {
+                        this.foliageMeshesFar[matIdx][partIdx].instanceMatrix.needsUpdate = true;
+                    }
+                }
+            }
+        }
+    }
 }
+

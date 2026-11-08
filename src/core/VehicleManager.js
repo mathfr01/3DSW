@@ -54,7 +54,8 @@ export class VehicleManager {
         this.heading = -Math.PI / 2;        // Heading direction in radians
         this.isDriving = false;             // State tracking
         this.cameraMode = 'third';          // Camera mode: 'first' or 'third'
-        this.pitchAdjustment = -36.5 * Math.PI / 180; // Corrects the inherent baked nose-dive tilt perfectly (36.5 degrees)
+        //this.pitchAdjustment = -36.5 * Math.PI / 180; // Corrects the inherent baked nose-dive tilt perfectly (36.5 degrees)
+        this.pitchAdjustment = 0; // Corrects the inherent baked nose-dive tilt perfectly (36.5 degrees)
         this.firstPersonOffset = new THREE.Vector3(0.23, 1.55, -0.15); // Driver's seat offset (Left seat maps to +X)
         
         // Spawn location close to the capsule player spawn (210, -100)
@@ -161,7 +162,7 @@ export class VehicleManager {
             
             // Rotate the visual mesh by Math.PI around the Y-axis so that it faces forward (+Z) instead of backward (-Z).
             // This also resolves the inverted pitch alignment issue on slopes.
-            visualMesh.rotation.y = Math.PI;
+            visualMesh.rotation.y = 0; //Math.PI;
             
             // Apply pitch adjustment to correct the baked tilt angle in the GLTF model
             visualMesh.rotation.x = this.pitchAdjustment;
@@ -394,6 +395,46 @@ export class VehicleManager {
                         pushZ = minDist;
                     }
                 }
+            } else if (object.geometry && object.geometry.boundsTree) {
+                // BVH Precise Triangle Collision for the vehicle
+                const bvhRaycaster = window.bvhRaycaster;
+                if (!bvhRaycaster) continue;
+                const vehicleDirections = window.bvhDirections;
+                if (!vehicleDirections) continue;
+
+                let maxPush = 0;
+                const pushDir = new THREE.Vector3();
+                const origin = new THREE.Vector3();
+                // Normal matrix to convert local normals to world-space
+                const normalMatrix = new THREE.Matrix3().getNormalMatrix(object.matrixWorld);
+                // Check at two heights: underbody and cabin
+                for (const h of [0.3, 1.2]) {
+                    origin.set(vehiclePos.x, vehiclePos.y - 0.5 + h, vehiclePos.z);
+                    for (const d of vehicleDirections) {
+                        bvhRaycaster.set(origin, d);
+                        bvhRaycaster.far = minDist;
+                        const hits = bvhRaycaster.intersectObject(object, false);
+                        if (hits.length > 0) {
+                            const hit = hits[0];
+                            const pushDist = minDist - hit.distance;
+                            if (pushDist > maxPush) {
+                                maxPush = pushDist;
+                                // Transform normal to world-space
+                                pushDir.copy(hit.face.normal).applyMatrix3(normalMatrix).normalize();
+                                pushDir.y = 0;
+                                pushDir.normalize();
+                                if (pushDir.lengthSq() < 0.1) {
+                                    pushDir.copy(d).negate();
+                                }
+                            }
+                        }
+                    }
+                }
+                if (maxPush > 0) {
+                    pushX = pushDir.x * maxPush;
+                    pushZ = pushDir.z * maxPush;
+                    colliding = true;
+                }
             } else {
                 // Horizontal closest point check for non-building colliders (like trunks)
                 const closestX = THREE.MathUtils.clamp(vehiclePos.x, box.min.x, box.max.x);
@@ -423,6 +464,43 @@ export class VehicleManager {
                 this.vehicle.position.z += THREE.MathUtils.clamp(pushZ, -maxPush, maxPush);
 
                 // Stop or bounce slightly on collision impact
+                if (Math.abs(this.speed) > 1.0) {
+                    this.speed = -this.speed * 0.15;
+                } else {
+                    this.speed = 0;
+                }
+            }
+        }
+
+        // Tree Cylinder Collisions for vehicle
+        if (window.treeColliders) {
+            let treePushX = 0;
+            let treePushZ = 0;
+            let treeColliding = false;
+            
+            for (const tree of window.treeColliders) {
+                const diffX = vehiclePos.x - tree.x;
+                const diffZ = vehiclePos.z - tree.z;
+                const distSq = diffX * diffX + diffZ * diffZ;
+                
+                const treeMinDist = minDist + tree.radius;
+                if (distSq < treeMinDist * treeMinDist) {
+                    const dist = Math.sqrt(distSq);
+                    if (dist === 0) {
+                        treePushZ += treeMinDist;
+                    } else {
+                        const overlap = treeMinDist - dist;
+                        treePushX += (diffX / dist) * overlap;
+                        treePushZ += (diffZ / dist) * overlap;
+                    }
+                    treeColliding = true;
+                }
+            }
+
+            if (treeColliding) {
+                const maxPush = 0.6;
+                this.vehicle.position.x += THREE.MathUtils.clamp(treePushX, -maxPush, maxPush);
+                this.vehicle.position.z += THREE.MathUtils.clamp(treePushZ, -maxPush, maxPush);
                 if (Math.abs(this.speed) > 1.0) {
                     this.speed = -this.speed * 0.15;
                 } else {

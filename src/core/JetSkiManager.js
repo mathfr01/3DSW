@@ -17,6 +17,8 @@ export class JetSkiManager {
 
         this.isDriving = false;
         this.cameraMode = 'third';          // 'first' or 'third'
+        this.attachedPlayer = null;
+        this.playerOffset = new THREE.Vector3(0, 1.2, -0.25);  //  Character capsule on the jetski
 
         // Free-look camera variables
         this.cameraYaw = this.heading;
@@ -187,6 +189,56 @@ export class JetSkiManager {
         soundManager.stopJetskiEngine();
     }
 
+    syncPlayerToVehicle(capsulePlayer) {
+        if (!capsulePlayer || !this.vehicle) return;
+
+        const offset = this.playerOffset.clone().applyQuaternion(this.vehicle.quaternion);
+        capsulePlayer.position.copy(this.vehicle.position).add(offset);
+        capsulePlayer.quaternion.copy(this.vehicle.quaternion);
+        capsulePlayer.visible = true;
+    }
+
+    findNearestShorePosition(origin) {
+        const angleSteps = 72;
+        const radiusStep = 0.75;
+        const maxRadius = 90;
+
+        // Search outward in rings, so the first valid ring is the nearest land
+        // around the JetSki. A little extra clearance places the whole capsule
+        // outside the water boundary instead of straddling the shoreline.
+        for (let radius = radiusStep; radius <= maxRadius; radius += radiusStep) {
+            let best = null;
+            let bestGround = -Infinity;
+            for (let i = 0; i < angleSteps; i++) {
+                const angle = (i / angleSteps) * Math.PI * 2;
+                const direction = new THREE.Vector3(Math.cos(angle), 0, Math.sin(angle));
+                const sample = new THREE.Vector3(
+                    origin.x + direction.x * radius,
+                    0,
+                    origin.z + direction.z * radius
+                );
+                if (terrainManager.isInLake(sample)) continue;
+
+                const groundY = terrainManager.getGroundHeightAt(sample);
+                if (groundY <= terrainManager.WATER_LEVEL - 0.2) continue;
+                if (groundY > bestGround) {
+                    bestGround = groundY;
+                    best = { direction, sample };
+                }
+            }
+            if (best) {
+                const exitPos = best.sample.addScaledVector(best.direction, 0.9);
+                exitPos.y = terrainManager.getGroundHeightAt(exitPos) + 0.65;
+                return exitPos;
+            }
+        }
+
+        // Safe fallback for malformed or missing shoreline masks.
+        const fallback = origin.clone().add(new THREE.Vector3(1, 0, 0));
+        fallback.y = terrainManager.getGroundHeightAt(fallback) + 0.65;
+        return fallback;
+    }
+
     toggleVehicleEntry(capsulePlayer, switchGameModeCallback, force = false) {
         if (!this.vehicle) return;
 
@@ -197,22 +249,14 @@ export class JetSkiManager {
             // Stop Jetski engine sounds
             soundManager.stopJetskiEngine();
 
-            // Exit coordinate left of jetski
-            const leftOffset = new THREE.Vector3(1, 0, 0)
-                .applyAxisAngle(new THREE.Vector3(0, 1, 0), this.heading)
-                .normalize()
-                .multiplyScalar(2.0);
-
-            const exitPos = this.vehicle.position.clone().add(leftOffset);
-
-            // Snap to ground or water surface, whichever is higher
-            const groundY = terrainManager.getGroundHeightAt(exitPos);
-            exitPos.y = Math.max(groundY, terrainManager.WATER_LEVEL) + 0.6;
+            const exitPos = this.findNearestShorePosition(this.vehicle.position);
 
             if (capsulePlayer) {
                 capsulePlayer.position.copy(exitPos);
                 capsulePlayer.visible = true;
+                capsulePlayer.rotation.set(0, this.heading, 0);
             }
+            this.attachedPlayer = null;
 
             this.hidePrompt();
             switchGameModeCallback('capsule');
@@ -229,7 +273,11 @@ export class JetSkiManager {
                 this.cameraYaw = this.heading;
                 this.cameraPitch = 0;
 
-                if (capsulePlayer) capsulePlayer.visible = false;
+                if (capsulePlayer) {
+                    capsulePlayer.visible = true;
+                    this.attachedPlayer = capsulePlayer;
+                    this.syncPlayerToVehicle(capsulePlayer);
+                }
 
                 // Start Jetski engine sounds
                 soundManager.resumeAudioContext();
@@ -324,6 +372,10 @@ export class JetSkiManager {
 
         const euler = new THREE.Euler(pitchAngle, this.heading, rollAngle, 'YXZ');
         this.vehicle.quaternion.setFromEuler(euler);
+
+        if (this.attachedPlayer) {
+            this.syncPlayerToVehicle(this.attachedPlayer);
+        }
 
         // Camera joystick inputs
         if (Math.abs(ctrls.joyCamX) > 0.05 || Math.abs(ctrls.joyCamY) > 0.05) {

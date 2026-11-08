@@ -8,7 +8,7 @@
     <link rel="shortcut icon" href="https://vgrcanada.org/games/3DSW/favicon.ico" />
     <link rel="apple-touch-icon" sizes="180x180" href="https://vgrcanada.org/games/3DSW/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-title" content="3D SW" />
-    <link rel="manifest" href="view-source:https://vgrcanada.org/games/3DSW/site.webmanifest" />
+    <link rel="manifest" href="site.webmanifest" />
     <style>
         body {
             margin: 0;
@@ -373,6 +373,21 @@
             <div class="menu-item" id="fishingTrophies">Fishing trophies / Trophées</div>
         </div>
     </div>
+
+    <!-- Character Select Overlay -->
+    <div id="characterSelectOverlay" style="position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(4,8,16,0.9);z-index:2000;">
+        <div style="background:#071018;color:#fff;padding:24px;border-radius:12px;text-align:center;min-width:260px;">
+            <h2 style="margin:0 0 12px;font-family:Arial,sans-serif">Select Character</h2>
+            <div style="display:flex;gap:12px;justify-content:center;">
+                <button id="selectHappy" style="padding:10px 16px;border-radius:8px;border:none;background:lab(59.53% -3.75 -49.38);color:#fff;font-weight:bold; cursor:pointer;">Happy</button>
+                <button id="selectMolly" style="padding:10px 16px;border-radius:8px;border:none;background:#8310b9;color:#fff;font-weight:bold; cursor:pointer;">Molly</button>
+                <button id="selectOto" style="padding:10px 16px;border-radius:8px;border:none;background:#ffa600;color:#fff;font-weight:bold; cursor:pointer;">Oto</button>
+                <button id="selectGramps" style="padding:10px 16px;border-radius:8px;border:none;background:#c24b4b;color:#fff;font-weight:bold; cursor:pointer;">Gramps</button>            
+            </div>
+            <div style="margin-top:12px;font-size:12px;opacity:0.9">You can change later in the menu</div>
+        </div>
+    </div>
+
     <!-- Contrôles mobiles -->
     <div class="mobile-controls" id="mobileControls">
         <div id="joystickLeft" class="joystick-base">
@@ -441,7 +456,8 @@
     "three/addons/math/OBB.js": "https://cdn.jsdelivr.net/npm/three@0.161/examples/jsm/math/OBB.js",
     "three/addons/objects/Water.js": "https://cdn.jsdelivr.net/npm/three@0.161/examples/jsm/objects/Water2.js",
     "three/addons/objects/Sky.js": "https://cdn.jsdelivr.net/npm/three@0.161/examples/jsm/objects/Sky.js",
-    "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.0/build/gaussian-splats-3d.module.js"
+    "@mkkellogg/gaussian-splats-3d": "https://cdn.jsdelivr.net/npm/@mkkellogg/gaussian-splats-3d@0.4.0/build/gaussian-splats-3d.module.js",
+    "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.7.3/build/index.module.js"
   }
 }
 </script>
@@ -456,15 +472,33 @@
         import { Water } from 'three/addons/objects/Water.js';
         import { Sky } from 'three/addons/objects/Sky.js';
         import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+        
+        // BVH Imports and Patching
+        import { computeBoundsTree, disposeBoundsTree, acceleratedRaycast } from 'three-mesh-bvh';
+        THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree;
+        THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree;
+        THREE.Mesh.prototype.raycast = acceleratedRaycast;
+
         import { inputManager } from './src/core/InputManager.js';
         import { terrainManager } from './src/core/TerrainManager.js';
         import { EnvironmentManager } from './src/core/EnvironmentManager.js';
-        import { vehicleManager } from './src/core/VehicleManager.js';
+        // VehicleManager is heavy and may have import ordering issues on some servers; load it dynamically to avoid blocking the main module on startup
+        let vehicleManager = null;
+        (async () => {
+            try {
+                const m = await import('./src/core/VehicleManager.js');
+                vehicleManager = m.vehicleManager;
+                window.vehicleManager = vehicleManager;
+                console.log('✅ VehicleManager loaded dynamically');
+            } catch (e) {
+                console.warn('⚠️ Dynamic import of VehicleManager failed:', e);
+            }
+        })();
         import { jetSkiManager } from './src/core/JetSkiManager.js';
         import { fishingManager } from './src/core/FishingManager.js';
+        import { lakeAquaticManager } from './src/core/LakeAquaticManager.js';
         import { soundManager } from './src/core/SoundManager.js';
         import { zipLineManager } from './src/core/ZipLineManager.js';
-        window.vehicleManager = vehicleManager;
         window.jetSkiManager = jetSkiManager;
         window.terrainManager = terrainManager;
         window.fishingManager = fishingManager;
@@ -473,6 +507,65 @@
         let splatViewers = [];
         let water;
         let treePrototype = null;
+        // Currently selected character (Happy or Molly). Default Happy.
+        let selectedCharacter = 'Happy';
+        // Flag set after the player performs a gesture (used to resume audio and allow free-look without pointer lock)
+        let userGestureReceived = false;
+        // Last mouse positions for non-pointer-lock free-look
+        let lastMouseX = null, lastMouseY = null;
+        // Wire up the character selection overlay (will be present in DOM)
+        function createCharacterSelectionHandlers() {
+            const overlay = document.getElementById('characterSelectOverlay');
+            if (!overlay) return;
+            const happyBtn = document.getElementById('selectHappy');
+            const mollyBtn = document.getElementById('selectMolly');
+            const otoBtn = document.getElementById('selectOto');
+            const grampsBtn = document.getElementById('selectGramps');
+            const hideOverlay = () => { overlay.style.display = 'none'; };
+            async function onCharacterSelected(name) {
+                selectedCharacter = name;
+                hideOverlay();
+
+                // Mark that the user interacted so we can resume audio and allow free-look without pointer lock
+                userGestureReceived = true;
+                // Enable non-pointer-lock free-look immediately
+                capsuleCamera.enabled = true;
+                lastMouseX = null; lastMouseY = null;
+
+                if (typeof soundManager !== 'undefined' && soundManager && typeof soundManager.resumeAudioContext === 'function') {
+                    try {
+                        await soundManager.resumeAudioContext();
+                        // Wind ambience is now handled entirely by the spatialized tree logic
+                        // if (!soundManager.activeSounds || !soundManager.activeSounds.has('wind')) {
+                        //     soundManager.playSound('wind', 0.35, true);
+                        // }
+                    } catch (e) { console.warn('Audio resume failed', e); }
+                }
+
+                // If a player already exists, remove it so the newly selected character can be created
+                try {
+                    if (capsulePlayer) {
+                        scene.remove(capsulePlayer);
+                    }
+                    if (playerModelGroup) {
+                        try { scene.remove(playerModelGroup); } catch (e) {}
+                        playerModelGroup = null;
+                    }
+                } catch (e) { console.warn('Error removing previous player model', e); }
+                capsulePlayer = null;
+                playerMixer = null;
+                walkAction = null; runAction = null; isModelLoaded = false;
+
+                if (typeof createCapsulePlayer === 'function' && isTerrainLoaded) createCapsulePlayer();
+            }
+
+            if (happyBtn) happyBtn.addEventListener('click', () => onCharacterSelected('Happy'));
+            if (mollyBtn) mollyBtn.addEventListener('click', () => onCharacterSelected('Molly'));
+            if (otoBtn) otoBtn.addEventListener('click', () => onCharacterSelected('Oto'));
+            if (grampsBtn) grampsBtn.addEventListener('click', () => onCharacterSelected('Gramps'));
+        }
+        // Delay wiring handlers until DOM is fully parsed
+        window.addEventListener('DOMContentLoaded', () => setTimeout(createCharacterSelectionHandlers, 50));
         let treeInstances = [];
         let treeInstancedGroups = []; // array of {instancedMesh, count}
         const TREE_COUNT = 100;
@@ -504,6 +597,7 @@
         let capsuleCamera = {
             pitch: 0,      // Rotation verticale (haut/bas)
             yaw: -Math.PI / 2,  // Rotation horizontale (commence vers l'avant)
+            // Increase sensitivity so pointer-lock relative movement feels responsive
             sensitivity: 0.002,
             enabled: false
         };
@@ -516,7 +610,15 @@
         let capsuleCollisionObjects = [];
         const capsuleRadius = 0.45;
         const capsuleCollisionPadding = 0.15;
-        function registerCollisionObject(object) { if (object && !capsuleCollisionObjects.includes(object)) capsuleCollisionObjects.push(object); }
+        function registerCollisionObject(object) { 
+            if (object && !capsuleCollisionObjects.includes(object)) {
+                // Ensure BVH is computed for precise raycast collisions
+                if (object.geometry && !object.geometry.boundsTree) {
+                    object.geometry.computeBoundsTree();
+                }
+                capsuleCollisionObjects.push(object); 
+            }
+        }
         function isDescendant(child, parent) {
             let node = child.parent;
             while (node !== null) {
@@ -529,6 +631,18 @@
             capsuleCollisionObjects = [];
             if (window.buildingGroup) window.buildingGroup.traverse((child) => { if (child.isMesh) registerCollisionObject(child); });
             if (window.treeGroup) window.treeGroup.traverse((child) => { if (child.isMesh && child.name === 'Trunk') registerCollisionObject(child); });
+
+            const isDescendantOfAny = (child, parents) => {
+                if (!parents) return false;
+                if (Array.isArray(parents)) {
+                    for (const p of parents) {
+                        if (isDescendant(child, p)) return true;
+                    }
+                    return false;
+                }
+                return isDescendant(child, parents);
+            };
+
             scene.traverse((child) => {
                 if (!child.isMesh ||
                     child === capsulePlayer ||
@@ -542,6 +656,7 @@
                     child.name === 'SkyBox' ||
                     isDescendant(child, window.buildingGroup) ||
                     isDescendant(child, window.treeGroup)) return;
+
                 // Exclude the vehicle and all of its child meshes from colliders list
                 if (window.vehicleManager && window.vehicleManager.vehicle) {
                     if (child === window.vehicleManager.vehicle || isDescendant(child, window.vehicleManager.vehicle)) {
@@ -553,24 +668,30 @@
                         return;
                     }
                 }
-                // Exclude Gaussian Splat viewers (they have oversized bounding boxes)
-                // Only include their marked collision proxies
+
+                // Exclude Gaussian Splat viewers internals: only include objects explicitly marked as collision proxies
                 if (child.userData && child.userData.isSplatCollision) {
                     registerCollisionObject(child);
                     console.log('Registered splat collision proxy:', child.name || 'unnamed');
-                } else if (isDescendant(child, splatViewers)) {
-                    return; // Skip all other meshes inside splat viewers
-                } else {
-                    const box = new THREE.Box3().setFromObject(child);
-                    const size = new THREE.Vector3();
-                    box.getSize(size);
-                    // Log large collision objects that might be causing issues
-                    if (size.x > 20 || size.z > 20) {
-                        console.log('Large collision object:', child.name || 'unnamed', 'size:', size);
-                    }
-                    registerCollisionObject(child);
+                    return;
                 }
+
+                // If child is part of any splat viewer (but not a collision proxy), skip it to avoid registering huge internal meshes
+                // FIXED: splatViewers is a local variable, not window.splatViewers.
+                if (isDescendantOfAny(child, splatViewers)) {
+                    return;
+                }
+
+                // Fallback: register normal mesh with size logging
+                const box = new THREE.Box3().setFromObject(child);
+                const size = new THREE.Vector3();
+                box.getSize(size);
+                if (size.x > 20 || size.z > 20) {
+                    console.log('Large collision object:', child.name || 'unnamed', 'size:', size);
+                }
+                registerCollisionObject(child);
             });
+
             console.log('Total collision objects:', capsuleCollisionObjects.length);
             window.collisionObjects = capsuleCollisionObjects;
             window.refreshCollisionObjects = refreshCollisionObjects;
@@ -609,6 +730,26 @@
             }
             return { point: closest, distance: Math.sqrt(minD2) };
         }
+
+        // Global BVH Raycaster and directions for high-performance mesh intersections
+        window.bvhRaycaster = new THREE.Raycaster();
+        window.bvhRaycaster.firstHitOnly = true; // Optimization provided by three-mesh-bvh
+        window.bvhDirections = [
+            new THREE.Vector3(1, 0, 0), new THREE.Vector3(1, 0, 1).normalize(),
+            new THREE.Vector3(0, 0, 1), new THREE.Vector3(-1, 0, 1).normalize(),
+            new THREE.Vector3(-1, 0, 0), new THREE.Vector3(-1, 0, -1).normalize(),
+            new THREE.Vector3(0, 0, -1), new THREE.Vector3(1, 0, -1).normalize()
+        ];
+        window.bvhHeights = [0.2, 0.8, 1.4]; // Feet, Waist, Head
+
+        // Reuse scratch objects in this per-frame collision path to avoid creating
+        // dozens of Three.js objects for every collider on every update.
+        const _capsuleCollisionBox = new THREE.Box3();
+        const _capsuleCollisionPoint = new THREE.Vector2();
+        const _capsuleCollisionPush = new THREE.Vector3();
+        const _capsuleCollisionOrigin = new THREE.Vector3();
+        const _capsuleCollisionNormalMatrix = new THREE.Matrix3();
+
         function resolveCapsuleCollisions() {
             if (!capsulePlayer || !capsuleCollisionObjects.length) return;
             const playerPos = capsulePlayer.position;
@@ -617,7 +758,7 @@
                 // FIXED: Check for sky/terrain without triggering 'instanceof' errors
                 if (!object || object === terrainMesh || object.type === 'Sky') continue;
                 object.updateWorldMatrix(true, false);
-                const box = new THREE.Box3().setFromObject(object);
+                const box = _capsuleCollisionBox.setFromObject(object);
                 if (!isFinite(box.min.x) || box.isEmpty()) continue;
                 // Vertical check
                 const playerFeet = playerPos.y - 0.6;
@@ -632,7 +773,7 @@
                 let pushZ = 0;
                 let colliding = false;
                 if (object.userData && object.userData.polygon) {
-                    const p = new THREE.Vector2(playerPos.x, playerPos.z);
+                    const p = _capsuleCollisionPoint.set(playerPos.x, playerPos.z);
                     const vs = object.userData.polygon;
                     const inside = isPointInPolygon(p, vs);
                     const closestResult = getClosestPointOnPolygon(p, vs);
@@ -663,8 +804,44 @@
                             pushZ = minDist;
                         }
                     }
+                } else if (object.geometry && object.geometry.boundsTree) {
+                    // BVH Precise Triangle Collision
+                    let maxPush = 0;
+                    const pushDir = _capsuleCollisionPush.set(0, 0, 0);
+                    const origin = _capsuleCollisionOrigin;
+                    // Normal matrix to convert local normals to world-space
+                    const normalMatrix = _capsuleCollisionNormalMatrix.getNormalMatrix(object.matrixWorld);
+                    
+                    for (const h of window.bvhHeights) {
+                        origin.set(playerPos.x, playerPos.y - 0.6 + h, playerPos.z);
+                        for (const d of window.bvhDirections) {
+                            window.bvhRaycaster.set(origin, d);
+                            window.bvhRaycaster.far = minDist;
+                            const hits = window.bvhRaycaster.intersectObject(object, false);
+                            if (hits.length > 0) {
+                                const hit = hits[0];
+                                const pushDist = minDist - hit.distance;
+                                if (pushDist > maxPush) {
+                                    maxPush = pushDist;
+                                    // Transform normal to world-space
+                                    pushDir.copy(hit.face.normal).applyMatrix3(normalMatrix).normalize();
+                                    pushDir.y = 0;
+                                    pushDir.normalize();
+                                    // Fallback if normal is perfectly vertical (e.g., floor/ceiling)
+                                    if (pushDir.lengthSq() < 0.1) {
+                                        pushDir.copy(d).negate();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if (maxPush > 0) {
+                        pushX = pushDir.x * maxPush;
+                        pushZ = pushDir.z * maxPush;
+                        colliding = true;
+                    }
                 } else {
-                    // Horizontal closest point check for non-building colliders (like trunks)
+                    // Horizontal closest point check for primitive colliders (AABB fallback)
                     const closestX = THREE.MathUtils.clamp(playerPos.x, box.min.x, box.max.x);
                     const closestZ = THREE.MathUtils.clamp(playerPos.z, box.min.z, box.max.z);
                     const diffX = playerPos.x - closestX;
@@ -691,6 +868,41 @@
                     capsulePhysics.velocity.z = 0;
                 }
             }
+
+            // Tree Cylinder Collisions
+            if (window.treeColliders) {
+                // Pre-calculate to avoid continuous array allocations
+                let treePushX = 0;
+                let treePushZ = 0;
+                let treeColliding = false;
+
+                for (const tree of window.treeColliders) {
+                    const diffX = capsulePlayer.position.x - tree.x;
+                    const diffZ = capsulePlayer.position.z - tree.z;
+                    const distSq = diffX * diffX + diffZ * diffZ;
+                    const treeMinDist = capsuleRadius + tree.radius + (capsuleCollisionPadding || 0.1);
+                    if (distSq < treeMinDist * treeMinDist) {
+                        const dist = Math.sqrt(distSq);
+                        if (dist === 0) {
+                            treePushZ += treeMinDist;
+                        } else {
+                            const overlap = treeMinDist - dist;
+                            treePushX += (diffX / dist) * overlap;
+                            treePushZ += (diffZ / dist) * overlap;
+                        }
+                        treeColliding = true;
+                    }
+                }
+
+                if (treeColliding) {
+                    const maxPush = 0.5;
+                    capsulePlayer.position.x += THREE.MathUtils.clamp(treePushX, -maxPush, maxPush);
+                    capsulePlayer.position.z += THREE.MathUtils.clamp(treePushZ, -maxPush, maxPush);
+                    capsulePhysics.velocity.x = 0;
+                    capsulePhysics.velocity.z = 0;
+                }
+            }
+
         }
         const capsuleSpeed = 25;
         const capsuleJumpHeight = 18;
@@ -731,7 +943,7 @@
             };
         }
         // Fonction pour créer le personnage capsule
-        function createCapsulePlayer() {
+        function createCapsulePlayer() { console.log('createCapsulePlayer() selectedCharacter=', selectedCharacter);
             capsulePlayer = new THREE.Group();
             // Invisible collision capsule for debugging/raycasting if needed
             const capsuleGeometry = new THREE.CapsuleGeometry(0.5, 1.5, 4, 8);
@@ -763,7 +975,9 @@
             const dracoLoader = new DRACOLoader();
             dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.1/');
             gltfLoader.setDRACOLoader(dracoLoader);
-            gltfLoader.load('./3DModels/Happy_Animation_Walking.glb', (gltf) => {
+            const walkPath = `./3DModels/${selectedCharacter}_Animation_Walking.glb`;
+            const runPath = `./3DModels/${selectedCharacter}_Animation_Running.glb`;
+            gltfLoader.load(walkPath, (gltf) => {
                 const model = gltf.scene;
                 // Offset vertically so the model stands on the ground
                 model.position.y = -1.2;
@@ -792,12 +1006,14 @@
                     walkAction.play();
                     currentAction = walkAction;
                 }
-                gltfLoader.load('./3DModels/Happy_Animation_Running.glb', (runGltf) => {
+                gltfLoader.load(runPath, (runGltf) => {
                     if (runGltf.animations && runGltf.animations.length > 0) {
                         runAction = playerMixer.clipAction(runGltf.animations[0]);
                     }
                     isModelLoaded = true;
                 });
+            }, undefined, (err) => {
+                console.warn('Failed to load player walk GLB:', walkPath, err);
             });
             console.log('🎮 Capsule created at:', capsulePlayer.position);
         }
@@ -1013,27 +1229,36 @@
                 capsuleCamera.pitch += capsuleControls.joyCamY * 0.05;
                 capsuleCamera.pitch = THREE.MathUtils.clamp(capsuleCamera.pitch, -Math.PI / 3, Math.PI / 3);
             }
-            if (capsuleCameraMode === 'first') {
+            if (gameMode === 'zipline') {
+                // Zipline uses a third-person follow camera so the player can look around while descending.
+                const distance = 4.5;
+                const lookHeight = 1.2;
+                const horizontalDistance = distance * Math.cos(capsuleCamera.pitch);
+                const verticalOffset = distance * Math.sin(capsuleCamera.pitch) - 1.2;
+                const cameraOffset = new THREE.Vector3(
+                    -horizontalDistance * Math.sin(capsuleCamera.yaw),
+                    2.0 + verticalOffset,
+                    -horizontalDistance * Math.cos(capsuleCamera.yaw)
+                );
+                const targetCameraPosition = capsulePlayer.position.clone().add(cameraOffset);
+                camera.position.lerp(targetCameraPosition, 0.18);
+                const lookTarget = capsulePlayer.position.clone();
+                lookTarget.y += lookHeight;
+                camera.lookAt(lookTarget);
+            } else if (capsuleCameraMode === 'first') {
                 // Mode 1ère personne - caméra dans la tête du personnage
                 const eyeHeight = 0.2; // Hauteur des yeux par rapport au centre de la capsule
                 const forwardOffset = 1.2; // Petit décalage vers l'avant pour éviter de voir à travers le personnage
                 // Positionner la caméra au niveau des yeux du personnage, légèrement vers l'avant
                 const targetCameraPosition = capsulePlayer.position.clone();
-                const currentEyeHeight = (gameMode === 'zipline') ? 0.1 : eyeHeight;
+                const currentEyeHeight = eyeHeight;
                 targetCameraPosition.y += currentEyeHeight;
-                // Ajouter un décalage vers l'avant basé sur la direction du regard
-                if (gameMode === 'zipline') {
-                    // For zipline, small forward offset along zipline direction to avoid seeing character body
-                    const ziplineDirection = new THREE.Vector3().subVectors(zipLineManager.endPos, zipLineManager.startPos).normalize();
-                    targetCameraPosition.add(ziplineDirection.multiplyScalar(0));
-                } else {
-                    const forwardDirection = new THREE.Vector3(0, 0, 1); // Inversé pour regarder vers l'avant
-                    forwardDirection.applyAxisAngle(new THREE.Vector3(0, 1, 0), capsuleCamera.yaw);
-                    targetCameraPosition.add(forwardDirection.multiplyScalar(forwardOffset));
-                }
-                // Interpolation douce pour un mouvement fluide
-                const lerpFactor = (gameMode === 'zipline') ? 0.8 : 0.2; // Faster follow for zipline to keep up with speed
-                camera.position.lerp(targetCameraPosition, lerpFactor);
+                const forwardDirection = new THREE.Vector3(0, 0, 1); // Inversé pour regarder vers l'avant
+                forwardDirection.applyAxisAngle(new THREE.Vector3(0, 1, 0), capsuleCamera.yaw);
+                targetCameraPosition.add(forwardDirection.multiplyScalar(forwardOffset));
+                // Keep first-person view fixed to the character's eyes; smoothing
+                // the camera position makes it visibly trail during movement.
+                camera.position.copy(targetCameraPosition);
                 // Calculer la direction de regard basée sur yaw/pitch avec quaternions pour éviter l'inversion
                 const tempCamera = new THREE.PerspectiveCamera(75, 1, 0.1, 1000);
                 tempCamera.rotation.order = 'YXZ';
@@ -1046,7 +1271,7 @@
                 camera.lookAt(lookTarget);
             } else {
                 // Mode 3ème personne - caméra derrière le personnage
-                const distance = 3;
+                const distance = 5;
                 const lookHeight = 1;
                 const horizontalDistance = distance * Math.cos(capsuleCamera.pitch);
                 const verticalOffset = distance * Math.sin(capsuleCamera.pitch) -2;
@@ -1064,24 +1289,23 @@
         }
         // Fonction pour gérer le mouvement de la souris
         function handleMouseMove(event) {
+            // Only rotate the camera when pointer lock is actually active.
+            // This prevents mouse movement from continuing to steer the camera after Escape.
             if (!capsuleCamera.enabled) return;
-            const movementX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
-            const movementY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
+
+            let movementX = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
+            let movementY = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
+
             if (gameMode === 'capsule' || gameMode === 'fishing' || gameMode === 'zipline') {
-                // Mettre à jour les angles de la caméra
+                // Update camera angles
                 capsuleCamera.yaw -= movementX * capsuleCamera.sensitivity;
-                capsuleCamera.pitch += movementY * capsuleCamera.sensitivity; // Inversé pour que souris haut = caméra haut
-                // Limiter l'angle vertical pour éviter de faire des tours complets
+                capsuleCamera.pitch += movementY * capsuleCamera.sensitivity; // inverted: mouse up = camera up
+                // Clamp vertical angle
                 capsuleCamera.pitch = THREE.MathUtils.clamp(capsuleCamera.pitch, -Math.PI / 3, Math.PI / 3);
-                // Normaliser l'angle horizontal
-                if (capsuleCamera.yaw > Math.PI * 2) {
-                    capsuleCamera.yaw -= Math.PI * 2;
-                } else if (capsuleCamera.yaw < -Math.PI * 2) {
-                    capsuleCamera.yaw += Math.PI * 2;
-                }
             } else if (gameMode === 'jetski') {
-                jetSkiManager.cameraYaw -= movementX * 0.002;
-                jetSkiManager.cameraPitch -= movementY * 0.002; // Inverted for natural look
+                // Use a higher multiplier for jetski free-look for better responsiveness
+                jetSkiManager.cameraYaw -= movementX * 0.006;
+                jetSkiManager.cameraPitch -= movementY * 0.006;
                 jetSkiManager.cameraPitch = THREE.MathUtils.clamp(jetSkiManager.cameraPitch, -Math.PI / 3, Math.PI / 3);
                 jetSkiManager.lastCameraMoveTime = performance.now();
             }
@@ -1091,14 +1315,17 @@
             capsuleCamera.enabled = !capsuleCamera.enabled;
             if (capsuleCamera.enabled) {
                 if (!useOrbitControl) {
-                    document.body.requestPointerLock();
-                    console.log('🖱️ Contrôle de la souris activé');
-                } else {
-                    console.log('🛰️ Orbit mode active — pointer lock prevented');
-                }
+                // Prefer locking the renderer canvas so mouse movement is consistently relative
+                try { (renderer && renderer.domElement && renderer.domElement.requestPointerLock) ? renderer.domElement.requestPointerLock() : document.body.requestPointerLock(); } catch (e) { try { document.body.requestPointerLock(); } catch (e2) {} }
+                // Resume audio on user gesture if needed
+                try { if (window.soundManager && typeof window.soundManager.resumeAudioContext === 'function') window.soundManager.resumeAudioContext(); } catch (e) {}
+                console.log('🖱️ Contrôle de la souris activé');
             } else {
-                document.exitPointerLock();
-                console.log('🖱️ Contrôle de la souris désactivé');
+                console.log('🛰️ Orbit mode active — pointer lock prevented');
+            }
+            } else {
+            document.exitPointerLock();
+            console.log('🖱️ Contrôle de la souris désactivé');
             }
         }
         function getLakeFacingYaw(position) {
@@ -1159,6 +1386,10 @@
             const jumpBtn = document.querySelector('.jump-btn');
             if (gameMode === 'capsule') {
                 document.getElementById('capsuleMode').classList.add('active');
+                // Vehicle exits return to normal capsule physics with a clean
+                // velocity state, preventing stale in-vehicle motion or falling.
+                capsulePhysics.velocity.set(0, 0, 0);
+                capsulePhysics.isGrounded = false;
                 if ('ontouchstart' in window || navigator.maxTouchPoints > 0) {
                     document.getElementById('mobileControls').classList.add('active');
                 }
@@ -1250,7 +1481,11 @@
                     mobBtn.style.display = 'block';
                     mobBtn.textContent = 'SORTIR JETSKI';
                 }
-                if (capsulePlayer) capsulePlayer.visible = false;
+                if (capsulePlayer && !jetSkiManager.isDriving) capsulePlayer.visible = false;
+                if (capsulePlayer && jetSkiManager.isDriving) {
+                    capsulePlayer.visible = true;
+                    jetSkiManager.syncPlayerToVehicle(capsulePlayer);
+                }
                 if (document.getElementById('cameraToggleBtn')) {
                     document.getElementById('cameraToggleBtn').style.display = 'block';
                 }
@@ -1277,6 +1512,10 @@
         const buildingsPath = 'SW_Buildings.png'; // Path to buildings PNG (black buildings)
         const beachPath = 'SW_Beach.png'; // Path to beach PNG (beach areas)
         const treesPath = 'SW_Trees.png'; // Path to trees PNG (black = tree locations)
+        const fencePath = 'SW_Fence.png'; // White strokes mark fence centerlines
+        // Terrain displacement constants must be declared before any async texture callbacks that may run immediately
+        const DISPLACEMENT = 37.5; // Max height of terrain in world units (adjust based on actual height map range)
+        const OFFSET = -20;
         let roadTexture, beachTexture, buildingGroup, treeGroup;
         const clock = new THREE.Clock();
         const canvasHeight = document.createElement('canvas');
@@ -1284,7 +1523,10 @@
         // Initialiser le mode de jeu après que le terrain soit chargé
         function initializeGameMode() {
             if (terrainManager.isTerrainLoaded && typeof getTerrainHeightAt === 'function') {
-                if (!capsulePlayer) createCapsulePlayer();
+                // Only auto-create the capsule player if the character selection overlay is not visible.
+                const overlay = document.getElementById && document.getElementById('characterSelectOverlay');
+                const overlayVisible = overlay && overlay.style.display !== 'none';
+                if (!capsulePlayer && !overlayVisible) createCapsulePlayer();
                 gameMode = 'rower';
                 switchGameMode('capsule');
             } else {
@@ -1359,12 +1601,12 @@
             gltfLoader.setDRACOLoader(dracoLoader);
             gltfLoader.load('3DModels/GoKart.glb', (gltf) => {
                 const gokart = gltf.scene;
-                const GoKartX = 35;
-                const GoKartZ = -195;
+                const GoKartX = 20;
+                const GoKartZ = -170;
                 // Get terrain height at the specified position
                 const terrainY = getTerrainHeightAt({ x: GoKartX, z: GoKartZ });
                 // Position the fireplace on the terrain
-                gokart.position.set(GoKartX, terrainY + 1.0, GoKartZ);
+                gokart.position.set(GoKartX, terrainY + 0.7, GoKartZ);
                 enhanceGLTFMaterials(gokart);
                 gokart.traverse((child) => {
                     if (child.isMesh) {
@@ -1372,11 +1614,11 @@
                         child.receiveShadow = true;
                     }
                 });
-                gokart.scale.set(2, 2, 2);
+                gokart.scale.set(2.3, 2.3, 2.3);
                 gokart.AmbientLight = true;
                 scene.add(gokart);
                 refreshCollisionObjects();
-                console.log('✅ GoKart loaded successfully at position: x=190, z=-44');
+                console.log('✅ GoKart loaded successfully at position: x=20, z=-170');
                 console.log(`📍 Terrain height at position: ${terrainY.toFixed(2)}`);
             },
                 (xhr) => {
@@ -1450,9 +1692,21 @@
                 });
                 welcomecenter.scale.set(20, 20, 20);
                 welcomecenter.rotation.y = THREE.MathUtils.degToRad(0); // Rotate the welcomecenter to better fit the terrain and create a more dynamic scene
+                // GLB origins are not guaranteed to be at the bottom of the
+                // model. Align the actual lowest point to the sampled ground.
+                welcomecenter.updateMatrixWorld(true);
+                const welcomeBounds = new THREE.Box3().setFromObject(welcomecenter);
+                welcomecenter.position.y += terrainY - welcomeBounds.min.y;
                 welcomecenter.AmbientLight = true;
                 scene.add(welcomecenter);
+                welcomecenter.updateMatrixWorld(true);
+                const placedWelcomeBounds = new THREE.Box3().setFromObject(welcomecenter);
                 refreshCollisionObjects();
+                console.log('[startup] Welcome Center ground alignment', {
+                    terrainY,
+                    modelBottomY: placedWelcomeBounds.min.y,
+                    difference: placedWelcomeBounds.min.y - terrainY
+                });
                 console.log('✅ Welcome Center loaded successfully at position: x=85, z=-10');
                 console.log(`📍 Terrain height at position: ${terrainY.toFixed(2)}`);
             },
@@ -1585,7 +1839,8 @@
             const viewer = new GaussianSplats3D.DropInViewer({
                 'sharedMemoryForWorkers': false,
                 'gpuAcceleratedSort': false,
-                'dynamicScene': true
+                // Splat models and their transforms are static after loading.
+                'dynamicScene': false
             });
             
             viewer.addSplatScenes([{
@@ -1684,17 +1939,6 @@
             });
         }
 
-        // LOAD CabinAcrossGirlsBunker SPLAT MODEL
-        // ==========================================
-        function loadCabinAcrossGirlsBunker() {
-            loadSplatModel('3DModels/CabinAcrossGirlsBunker.splat', -48, -132, 16, 20, 180, 'CabinAcrossGirlsBunker', 3.0, 0);
-        }
-
-        // LOAD Pavilion SPLAT MODEL
-        // ==========================================
-        function loadPavilion() {
-            loadSplatModel('3DModels/Pavilion.splat', 0, -280, 40, 150, 179, 'Pavilion', 4.0, 0);
-        }
 
         // LOAD EntranceFirePlace SPLAT MODEL
         // ==========================================
@@ -1708,17 +1952,6 @@
             loadSplatModel('3DModels/Building_Dock_Splat.splat', 25, 45, 10, 45, 181, 'BuildingDock', 0.9, 0);  //url, posX, posZ, scaleFactor, rotY, rotZ, name, terrainOffsetY = 3.0
         }
         
-        // LOAD RaceTrack SPLAT MODEL
-        // ==========================================
-        function loadRaceTrackSplat() {
-            loadSplatModel('3DModels/RaceTrack.splat', 35, -195, 80, 100, 179,'RaceTrack', 4.7, 1);  //url, posX, posZ, scaleFactor, rotY, rotZ, name, terrainOffsetY = 3.0
-        }
-
-             // LOAD GoKart SPLAT MODEL
-        // ==========================================
-        function loadGoKartSplat() {
-            loadSplatModel('3DModels/GoKart.splat', 35, -195, 5, 100, 179,'RaceTrack', 3, 0);  //url, posX, posZ, scaleFactor, rotY, rotZ, name, terrainOffsetY = 3.0, rotX
-        }   
 
         // LOAD ZipLineTower GLB MODEL
         // ==========================================
@@ -1758,6 +1991,480 @@
                 });
         }
 
+        function loadCabinAcrossGirlsBunker() {
+                const gltfLoader = new GLTFLoader();
+                const dracoLoader = new DRACOLoader();
+                dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.1/');
+                gltfLoader.setDRACOLoader(dracoLoader);
+                gltfLoader.load('3DModels/CabinAcrossGirlsBunker.glb', (gltf) => {
+                    const cabinAcrossGirlsBunker = gltf.scene;
+                    const CabinAcrossGirlsBunkerX = -48;
+                    const CabinAcrossGirlsBunkerZ = -132;
+
+                    // Get terrain height at the specified position
+                    const terrainY = getTerrainHeightAt({ x: CabinAcrossGirlsBunkerX, z: CabinAcrossGirlsBunkerZ });
+                    // Position the cabinAcrossGirlsBunker on the terrain
+                    cabinAcrossGirlsBunker.position.set(CabinAcrossGirlsBunkerX, terrainY + 3.5, CabinAcrossGirlsBunkerZ);
+                    enhanceGLTFMaterials(cabinAcrossGirlsBunker);
+                    cabinAcrossGirlsBunker.traverse((child) => {
+                        if (child.isMesh) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                        }
+                    });
+                    cabinAcrossGirlsBunker.scale.set(19, 19, 19);
+                    cabinAcrossGirlsBunker.rotation.y = THREE.MathUtils.degToRad(110); // Rotate the cabinAcrossGirlsBunker to better fit the terrain and create a more dynamic scene
+                    cabinAcrossGirlsBunker.AmbientLight = true;
+                    scene.add(cabinAcrossGirlsBunker);
+                    refreshCollisionObjects();
+                    console.log('✅ CabinAcrossGirlsBunker loaded successfully at position: x=-48, z=-132');
+                    console.log(`📍 Terrain height at position: ${terrainY.toFixed(2)}`);
+                },
+                    (xhr) => {
+                        console.log(`Loading CabinAcrossGirlsBunker: ${(xhr.loaded / xhr.total * 100).toFixed(1)}%`);
+                    },
+                    (error) => {
+                        console.error('❌ Error loading CabinAcrossGirlsBunker:', error);
+                    });
+        }
+
+        function loadPavilion() {
+                const gltfLoader = new GLTFLoader();
+                const dracoLoader = new DRACOLoader();
+                dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.1/');
+                gltfLoader.setDRACOLoader(dracoLoader);
+                gltfLoader.load('3DModels/Pavilion.glb', (gltf) => {
+                    const pavilion = gltf.scene;
+                    const PavilionX = -30;
+                    const PavilionZ = -280;
+
+                    // Get terrain height at the specified position
+                    const terrainY = getTerrainHeightAt({ x: PavilionX, z: PavilionZ });
+                    // Position the pavilion on the terrain
+                    pavilion.position.set(PavilionX, terrainY + 2.65, PavilionZ);
+                    enhanceGLTFMaterials(pavilion);
+                    pavilion.traverse((child) => {
+                        if (child.isMesh) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                        }
+                    });
+                    pavilion.scale.set(45, 45, 45);
+                    pavilion.rotation.y = THREE.MathUtils.degToRad(30); // Rotate the pavilion to better fit the terrain and create a more dynamic scene
+                    pavilion.AmbientLight = true;
+
+                    const box = new THREE.Box3().setFromObject(pavilion);
+                    const size = new THREE.Vector3();
+                    const center = new THREE.Vector3();
+                    box.getSize(size);
+                    box.getCenter(center);
+
+                    console.log('Model Size:', size);
+                    console.log('Model World Center:', center);
+
+                    scene.add(pavilion);
+                    refreshCollisionObjects();
+                    console.log('✅ Pavilion loaded successfully at position: x=40, z=-280');
+                    console.log(`📍 Terrain height at position: ${terrainY.toFixed(2)}`);
+                },
+                    (xhr) => {
+                        console.log(`Loading Pavilion: ${(xhr.loaded / xhr.total * 100).toFixed(1)}%`);
+                    },
+                    (error) => {
+                        console.error('❌ Error loading Pavilion:', error);
+                    });
+        }
+
+        function loadPickleball() {
+                const gltfLoader = new GLTFLoader();
+                const dracoLoader = new DRACOLoader();
+                dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.1/');
+                gltfLoader.setDRACOLoader(dracoLoader);
+                gltfLoader.load('3DModels/Pickleball.glb', (gltf) => {
+                    const pickleball = gltf.scene;
+                    const PickleballX = 0;
+                    const PickleballZ = -250;
+
+                    // Get terrain height at the specified position
+                    const terrainY = getTerrainHeightAt({ x: PickleballX, z: PickleballZ });
+                    // Position the pickleball on the terrain
+                    pickleball.position.set(PickleballX, terrainY + 1.1, PickleballZ);
+                    enhanceGLTFMaterials(pickleball);
+                    pickleball.traverse((child) => {
+                        if (child.isMesh) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                        }
+                    });
+                    pickleball.scale.set(30, 30, 30);
+                    pickleball.rotation.y = THREE.MathUtils.degToRad(30); // Rotate the pickleball to better fit the terrain and create a more dynamic scene
+                    pickleball.AmbientLight = true;
+
+                    const box = new THREE.Box3().setFromObject(pickleball);
+                    const size = new THREE.Vector3();
+                    const center = new THREE.Vector3();
+                    box.getSize(size);
+                    box.getCenter(center);
+
+                    console.log('Model Size:', size);
+                    console.log('Model World Center:', center);
+
+                    scene.add(pickleball);
+                    refreshCollisionObjects();
+                    console.log('✅ Pickleball loaded successfully at position: x=40, z=-280');
+                    console.log(`📍 Terrain height at position: ${terrainY.toFixed(2)}`);
+                },
+                    (xhr) => {
+                        console.log(`Loading Pickleball: ${(xhr.loaded / xhr.total * 100).toFixed(1)}%`);
+                    },
+                    (error) => {
+                        console.error('❌ Error loading Pickleball:', error);
+                    });
+        }
+
+        function loadRaceTrack() {
+                const gltfLoader = new GLTFLoader();
+                const dracoLoader = new DRACOLoader();
+                dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.1/');
+                gltfLoader.setDRACOLoader(dracoLoader);
+                gltfLoader.load('3DModels/RaceTrack.glb', (gltf) => {
+                    const raceTrack = gltf.scene;
+                    const RaceTrackX = 35;
+                    const RaceTrackZ = -195;
+
+                    //35, -195, 80, 100, 179,
+                    // Get terrain height at the specified position
+                    const terrainY = getTerrainHeightAt({ x: RaceTrackX, z: RaceTrackZ });
+                    // Position the raceTrack on the terrain
+                    raceTrack.position.set(RaceTrackX, terrainY + 0.1, RaceTrackZ);
+                    enhanceGLTFMaterials(raceTrack);
+                    raceTrack.traverse((child) => {
+                        if (child.isMesh) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                        }
+                    });
+                    raceTrack.scale.set(80, 80, 80);
+                    raceTrack.rotation.y = THREE.MathUtils.degToRad(8); // Rotate the raceTrack to better fit the terrain and create a more dynamic scene
+                    raceTrack.AmbientLight = true;
+
+                    const box = new THREE.Box3().setFromObject(raceTrack);
+                    const size = new THREE.Vector3();
+                    const center = new THREE.Vector3();
+                    box.getSize(size);
+                    box.getCenter(center);
+
+                    console.log('Model Size:', size);
+                    console.log('Model World Center:', center);
+
+                    scene.add(raceTrack);
+                    refreshCollisionObjects();
+                    console.log('✅ RaceTrack loaded successfully at position: x=0, z=-250');
+                    console.log(`📍 Terrain height at position: ${terrainY.toFixed(2)}`);
+                },
+                    (xhr) => {
+                        console.log(`Loading RaceTrack: ${(xhr.loaded / xhr.total * 100).toFixed(1)}%`);
+                    },
+                    (error) => {
+                        console.error('❌ Error loading RaceTrack:', error);
+                    });
+        }     
+        
+        function loadRaceTrackBuilding1() {
+                const gltfLoader = new GLTFLoader();
+                const dracoLoader = new DRACOLoader();
+                dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.1/');
+                gltfLoader.setDRACOLoader(dracoLoader);
+                gltfLoader.load('3DModels/RaceTrackBuilding1.glb', (gltf) => {
+                    const raceTrackBuilding1 = gltf.scene;
+                    const RaceTrackBuilding1X = -3;
+                    const RaceTrackBuilding1Z = -192;
+
+                    //35, -195, 80, 100, 179,
+                    // Get terrain height at the specified position
+                    const terrainY = getTerrainHeightAt({ x: RaceTrackBuilding1X, z: RaceTrackBuilding1Z });
+                    // Position the raceTrack on the terrain
+                    raceTrackBuilding1.position.set(RaceTrackBuilding1X, terrainY + 2, RaceTrackBuilding1Z);
+                    enhanceGLTFMaterials(raceTrackBuilding1);
+                    raceTrackBuilding1.traverse((child) => {
+                        if (child.isMesh) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                        }
+                    });
+                    raceTrackBuilding1.scale.set(12, 12, 12);
+                    raceTrackBuilding1.rotation.y = THREE.MathUtils.degToRad(20); // Rotate the raceTrack to better fit the terrain and create a more dynamic scene
+                    raceTrackBuilding1.AmbientLight = true;
+
+                    const box = new THREE.Box3().setFromObject(raceTrackBuilding1);
+                    const size = new THREE.Vector3();
+                    const center = new THREE.Vector3();
+                    box.getSize(size);
+                    box.getCenter(center);
+
+                    console.log('Model Size:', size);
+                    console.log('Model World Center:', center);
+
+                    scene.add(raceTrackBuilding1);
+                    refreshCollisionObjects();
+                    console.log('✅ RaceTrackBuilding1 loaded successfully at position: x=25, z=-195');
+                    console.log(`📍 Terrain height at position: ${terrainY.toFixed(2)}`);
+                },
+                    (xhr) => {
+                        console.log(`Loading RaceTrackBuilding1: ${(xhr.loaded / xhr.total * 100).toFixed(1)}%`);
+                    },
+                    (error) => {
+                        console.error('❌ Error loading RaceTrackBuilding1:', error);
+                    });
+        }    
+
+        function loadRaceTrackBuilding2() {
+                const gltfLoader = new GLTFLoader();
+                const dracoLoader = new DRACOLoader();
+                dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.1/');
+                gltfLoader.setDRACOLoader(dracoLoader);
+                gltfLoader.load('3DModels/RaceTrackBuilding2.glb', (gltf) => {
+                    const raceTrackBuilding2 = gltf.scene;
+                    const RaceTrackBuilding2X = 8;
+                    const RaceTrackBuilding2Z = -176;
+
+                    //35, -195, 80, 100, 179,
+                    // Get terrain height at the specified position
+                    const terrainY = getTerrainHeightAt({ x: RaceTrackBuilding2X, z: RaceTrackBuilding2Z });
+                    // Position the raceTrack on the terrain
+                    raceTrackBuilding2.position.set(RaceTrackBuilding2X, terrainY + 3, RaceTrackBuilding2Z);
+                    enhanceGLTFMaterials(raceTrackBuilding2);
+                    raceTrackBuilding2.traverse((child) => {
+                        if (child.isMesh) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                        }
+                    });
+                    raceTrackBuilding2.scale.set(18, 18, 18);
+                    raceTrackBuilding2.rotation.y = THREE.MathUtils.degToRad(110); // Rotate the raceTrack to better fit the terrain and create a more dynamic scene
+                    raceTrackBuilding2.AmbientLight = true;
+
+                    const box = new THREE.Box3().setFromObject(raceTrackBuilding2);
+                    const size = new THREE.Vector3();
+                    const center = new THREE.Vector3();
+                    box.getSize(size);
+                    box.getCenter(center);
+
+                    console.log('Model Size:', size);
+                    console.log('Model World Center:', center);
+
+                    scene.add(raceTrackBuilding2);
+                    refreshCollisionObjects();
+                    console.log('✅ RaceTrackBuilding2 loaded successfully at position: x=0, z=-180');
+                    console.log(`📍 Terrain height at position: ${terrainY.toFixed(2)}`);
+                },
+                    (xhr) => {
+                        console.log(`Loading RaceTrackBuilding2: ${(xhr.loaded / xhr.total * 100).toFixed(1)}%`);
+                    },
+                    (error) => {
+                        console.error('❌ Error loading RaceTrackBuilding2:', error);
+                    });
+        }    
+
+        function loadStands() {
+            const gltfLoader = new GLTFLoader();
+            const dracoLoader = new DRACOLoader();
+            dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.1/');
+            gltfLoader.setDRACOLoader(dracoLoader);
+
+            // 1. Define all your stand coordinates in one place
+            const standPositions = [
+                { x: 10, z: -215, rotationY: 20 },
+                { x: 30, z: -155, rotationY: -205 }  // Your new stand
+            ];
+
+            gltfLoader.load(
+                '3DModels/Stands.glb',
+                (gltf) => {
+                    const baseModel = gltf.scene;
+
+                    // Enhance materials and set up shadows on the base model ONCE
+                    enhanceGLTFMaterials(baseModel);
+                    baseModel.traverse((child) => {
+                        if (child.isMesh) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                        }
+                    });
+
+                    // 2. Loop through each coordinate set and place a clone
+                    standPositions.forEach((pos, index) => {
+                        // Clone the base model (shares geometry & textures)
+                        const standInstance = baseModel.clone(true);
+
+                        const terrainY = getTerrainHeightAt({ x: pos.x, z: pos.z });
+
+                        // Position, scale, and rotate individual instance
+                        standInstance.position.set(pos.x, terrainY + 1.4, pos.z);
+                        standInstance.scale.set(18, 18, 18);
+                        standInstance.rotation.y = THREE.MathUtils.degToRad(pos.rotationY);
+
+                        // Add to the main scene
+                        scene.add(standInstance);
+
+                        console.log(`✅ Stand ${index + 1} loaded at x=${pos.x}, y=${terrainY.toFixed(2)}, z=${pos.z}`);
+                    });
+
+                    // Update collisions once all stands are placed
+                    refreshCollisionObjects();
+                },
+                (xhr) => {
+                    console.log(`Loading Stands: ${(xhr.loaded / xhr.total * 100).toFixed(1)}%`);
+                },
+                (error) => {
+                    console.error('❌ Error loading Stands:', error);
+                }
+            );
+        }        
+
+
+
+
+        function loadWater_Slide() {
+                const gltfLoader = new GLTFLoader();
+                const dracoLoader = new DRACOLoader();
+                dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.1/');
+                gltfLoader.setDRACOLoader(dracoLoader);
+                gltfLoader.load('3DModels/Water_Slide.glb', (gltf) => {
+                    const water_Slide = gltf.scene;
+                    const Water_SlideX = -105;
+                    const Water_SlideZ = -170;
+
+                    // Get terrain height at the specified position
+                    const terrainY = getTerrainHeightAt({ x: Water_SlideX, z: Water_SlideZ });
+                    // Position the water_Slide on the terrain
+                    water_Slide.position.set(Water_SlideX, terrainY + 10.5, Water_SlideZ);
+                    enhanceGLTFMaterials(water_Slide);
+                    water_Slide.traverse((child) => {
+                        if (child.isMesh) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                        }
+                    });
+                    water_Slide.scale.set(10, 10, 10);
+                    water_Slide.rotation.y = THREE.MathUtils.degToRad(20); // Rotate the water_Slide to better fit the terrain and create a more dynamic scene
+                    water_Slide.AmbientLight = true;
+
+                    const box = new THREE.Box3().setFromObject(water_Slide);
+                    const size = new THREE.Vector3();
+                    const center = new THREE.Vector3();
+                    box.getSize(size);
+                    box.getCenter(center);
+
+                    console.log('Model Size:', size);
+                    console.log('Model World Center:', center);
+
+                    scene.add(water_Slide);
+                    refreshCollisionObjects();
+                    console.log('✅ Water_Slide loaded successfully at position: x=-110, z=-170');
+                    console.log(`📍 Terrain height at position: ${terrainY.toFixed(2)}`);
+                },
+                    (xhr) => {
+                        console.log(`Loading Water_Slide: ${(xhr.loaded / xhr.total * 100).toFixed(1)}%`);
+                    },
+                    (error) => {
+                        console.error('❌ Error loading Water_Slide:', error);
+                    });
+        }
+
+                function loadWater_Games() {
+                const gltfLoader = new GLTFLoader();
+                const dracoLoader = new DRACOLoader();
+                dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.1/');
+                gltfLoader.setDRACOLoader(dracoLoader);
+                gltfLoader.load('3DModels/Water_Games.glb', (gltf) => {
+                    const water_Games = gltf.scene;
+                    const Water_GamesX = -105;
+                    const Water_GamesZ = -150;
+
+                    // Get terrain height at the specified position
+                    const terrainY = getTerrainHeightAt({ x: Water_GamesX, z: Water_GamesZ });
+                    // Position the water_Games on the terrain
+                    water_Games.position.set(Water_GamesX, terrainY + 10, Water_GamesZ);
+                    enhanceGLTFMaterials(water_Games);
+                    water_Games.traverse((child) => {
+                        if (child.isMesh) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                        }
+                    });
+                    water_Games.scale.set(25, 25, 25);
+                    water_Games.rotation.y = THREE.MathUtils.degToRad(290); // Rotate the water_Games to better fit the terrain and create a more dynamic scene
+                    water_Games.AmbientLight = true;
+
+                    const box = new THREE.Box3().setFromObject(water_Games);
+                    const size = new THREE.Vector3();
+                    const center = new THREE.Vector3();
+                    box.getSize(size);
+                    box.getCenter(center);
+
+                    console.log('Model Size:', size);
+                    console.log('Model World Center:', center);
+
+                    scene.add(water_Games);
+                    refreshCollisionObjects();
+                    console.log('✅ Water_Games loaded successfully at position: x=-110, z=-170');
+                    console.log(`📍 Terrain height at position: ${terrainY.toFixed(2)}`);
+                },
+                    (xhr) => {
+                        console.log(`Loading Water_Games: ${(xhr.loaded / xhr.total * 100).toFixed(1)}%`);
+                    },
+                    (error) => {
+                        console.error('❌ Error loading Water_Games:', error);
+                    });
+        }
+
+                function loadToiletCabinLeftBeach() {
+                const gltfLoader = new GLTFLoader();
+                const dracoLoader = new DRACOLoader();
+                dracoLoader.setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.4.1/');
+                gltfLoader.setDRACOLoader(dracoLoader);
+                gltfLoader.load('3DModels/ToiletCabinLeftBeach.glb', (gltf) => {
+                    const toiletCabinLeftBeach = gltf.scene;
+                    const ToiletCabinLeftBeachX = -65;
+                    const ToiletCabinLeftBeachZ = -165;
+
+                    // Get terrain height at the specified position
+                    const terrainY = getTerrainHeightAt({ x: ToiletCabinLeftBeachX, z: ToiletCabinLeftBeachZ });
+                    // Position the toiletCabinLeftBeach on the terrain
+                    toiletCabinLeftBeach.position.set(ToiletCabinLeftBeachX, terrainY + 2, ToiletCabinLeftBeachZ);
+                    enhanceGLTFMaterials(toiletCabinLeftBeach);
+                    toiletCabinLeftBeach.traverse((child) => {
+                        if (child.isMesh) {
+                            child.castShadow = true;
+                            child.receiveShadow = true;
+                        }
+                    });
+                    toiletCabinLeftBeach.scale.set(8, 8, 8);
+                    toiletCabinLeftBeach.rotation.y = THREE.MathUtils.degToRad(30); // Rotate the toiletCabinLeftBeach to better fit the terrain and create a more dynamic scene
+                    toiletCabinLeftBeach.AmbientLight = true;
+
+                    const box = new THREE.Box3().setFromObject(toiletCabinLeftBeach);
+                    const size = new THREE.Vector3();
+                    const center = new THREE.Vector3();
+                    box.getSize(size);
+                    box.getCenter(center);
+
+                    console.log('Model Size:', size);
+                    console.log('Model World Center:', center);
+
+                    scene.add(toiletCabinLeftBeach);
+                    refreshCollisionObjects();
+                    console.log('✅ ToiletCabinLeftBeach loaded successfully at position: x=-65, z=-165');
+                    console.log(`📍 Terrain height at position: ${terrainY.toFixed(2)}`);
+                },
+                    (xhr) => {
+                        console.log(`Loading ToiletCabinLeftBeach: ${(xhr.loaded / xhr.total * 100).toFixed(1)}%`);
+                    },
+                    (error) => {
+                        console.error('❌ Error loading ToiletCabinLeftBeach:', error);
+                    });
+        }        
         // LOAD FLYING EAGLE
         // ==========================================
         function loadFlyingEagle() {
@@ -1788,8 +2495,23 @@
                 eagle.scale.set(0.001, 0.001, 0.001);
                 eagle.AmbientLight = true;
                 scene.add(eagle);
-                eagleFlightController = new EagleFlightController(eagle);
-                console.log('✅ Eagle loaded successfully and flight controller initialized!');
+                // Defer creating the controller in case the class hasn't been initialized yet (image cache or fast network may make this callback run early)
+                setTimeout(() => {
+                    if (typeof EagleFlightController !== 'undefined') {
+                        eagleFlightController = new EagleFlightController(eagle);
+                        console.log('✅ Eagle loaded successfully and flight controller initialized!');
+                    } else {
+                        console.warn('⚠️ EagleFlightController not ready; retrying shortly');
+                        setTimeout(() => {
+                            if (typeof EagleFlightController !== 'undefined') {
+                                eagleFlightController = new EagleFlightController(eagle);
+                                console.log('✅ Eagle loaded successfully and flight controller initialized on retry!');
+                            } else {
+                                console.error('❌ EagleFlightController still not available after retry');
+                            }
+                        }, 150);
+                    }
+                }, 0);
             },
                 (xhr) => {
                     console.log(`Loading Eagle: ${(xhr.loaded / xhr.total * 100).toFixed(1)}%`);
@@ -2008,8 +2730,10 @@
             const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
             dirLight.position.set(500, 800, 500);
             dirLight.castShadow = true;
-            dirLight.shadow.mapSize.width = 4096;
-            dirLight.shadow.mapSize.height = 4096;
+            // 2048 is sufficient for this scene's broad shadow camera and
+            // cuts shadow-map memory and fill work by 75% versus 4096.
+            dirLight.shadow.mapSize.width = 2048;
+            dirLight.shadow.mapSize.height = 2048;
             dirLight.shadow.camera.near = 0.1;
             dirLight.shadow.camera.far = 3000;
             dirLight.shadow.camera.left = -1000;
@@ -2090,11 +2814,6 @@
             // Load all textures
             // Load lake boundary mask FIRST (needed for lake depth modification)
             textureLoader.load(lakeBoundaryPath, (t) => terrainManager.setupLakeBoundary(t));
-            // Load height map AFTER lake boundary (so lake depth can be applied)
-            textureLoader.load(heightMapPath, (texture) => {
-                // Keep height map for terrain rendering but use lake boundary for collision
-                terrainManager.setupHeightMapCollision(texture);
-            });
             loadTerrain();
             // Load roads overlay
             textureLoader.load(roadsPath, (t) => terrainManager.setupRoads(t));
@@ -2104,27 +2823,6 @@
             textureLoader.load(beachPath, (t) => terrainManager.setupBeach(t));
             // Load trees overlay
             textureLoader.load(treesPath, (t) => terrainManager.setupTrees(t));
-            // Load Entrance Fireplace GLB model
-            loadEntranceFirePlace();
-            loadChapel();
-            loadWelcomeCenter();
-            loadBoysDorm();
-            loadGirlsDorm();
-            loadCampFirePlace();
-            loadCabinAcrossGirlsBunker();
-            loadPavilion();
-            loadZipLineTower();
-            loadFlyingEagle();
-            loadRaceTrackSplat();
-            loadGoKart();
-            //loadGoKartSplat();
-            // Load Boat Dock GLB model
-            //loadBoatDock();   This is the older model, in GLB.
-
-            loadBuildingDockSplat();
-            // Load drivable side-by-side UTV using vehicleManager
-            vehicleManager.loadVehicle(scene);
-            jetSkiManager.loadVehicle(scene);
             // Add keyboard shortcut to drive vehicle (press 'E')
             window.addEventListener('keydown', async (event) => {
                 if (event.code === 'KeyE') {
@@ -2160,6 +2858,345 @@
                     soundManager.loadFootstepSounds();
                     soundManager.loadSound('eagleCry', 'sounds/eaglecry.mp3');
                     soundManager.loadSound('jetskiWake', 'sounds/jetski_wake.mp3');
+
+                    // Ambient sounds: wind and periodic birds
+                    soundManager.loadSound('wind', 'sounds/Wind_leafs.mp3');
+                    soundManager.loadSound('bird1', 'sounds/red-winged-blackbird.mp3');
+                    soundManager.loadSound('bird2', 'sounds/mourningdove.mp3');
+                    soundManager.loadSound('bird3', 'sounds/AmericanRobin1.mp3');
+                    soundManager.loadSound('bird4', 'sounds/AmericanRobin2.mp3');
+                    soundManager.loadSound('bird5', 'sounds/AmericanRobin3.mp3');
+                    soundManager.loadSound('bird6', 'sounds/AmericanRobin4.mp3');
+                    soundManager.loadSound('bird7', 'sounds/CedarWaxwings1.mp3');
+                    soundManager.loadSound('bird8', 'sounds/CedarWaxwings2.mp3');
+                    soundManager.loadSound('bird9', 'sounds/CedarWaxwings3.mp3');
+
+                    const birdSoundNames = ['bird1', 'bird2', 'bird3', 'bird4', 'bird5', 'bird6', 'bird7', 'bird8', 'bird9'];
+
+                    // Create continuous wind loop with volume based on proximity to trees
+                    try {
+                        let treePositions = [];
+                        if (window.treeGroup) {
+                            window.treeGroup.traverse((c) => { if (c.isMesh) {
+                                const wp = new THREE.Vector3();
+                                c.getWorldPosition(wp);
+                                treePositions.push(wp);
+                            }});
+                        }
+                        
+                        // Start wind loop at 0 volume (it will be updated by the interval)
+                        soundManager.playSound('wind', 0, true);
+
+                        // Update wind volume and pitch continuously
+                        setInterval(() => {
+                            if (!soundManager.activeSounds || !soundManager.activeSounds.has('wind')) {
+                                // Try to start it if it wasn't loaded yet
+                                soundManager.playSound('wind', 0, true);
+                                return;
+                            }
+                            const windObj = soundManager.activeSounds.get('wind');
+                            if (!windObj || !windObj.gainNode) return;
+                            if (typeof capsuleCamera === 'undefined' || !capsuleCamera) return;
+
+                            const camPos = capsuleCamera.position;
+                            let minDistance = Infinity;
+
+                            for (let i = 0; i < treePositions.length; i++) {
+                                const dist = camPos.distanceTo(treePositions[i]);
+                                if (dist < minDistance) minDistance = dist;
+                            }
+                            // Fallback if no trees
+                            if (treePositions.length === 0) minDistance = 50;
+
+                            // Calculate volume based on distance (closer = louder, max distance 150)
+                            let targetVol = 0;
+                            if (minDistance < 150) {
+                                targetVol = 0.35 * (1 - Math.max(0, minDistance - 10) / 140);
+                            }
+                             
+                            // Add random intensity variation
+                            const intensity = Math.random();
+                            let volMult = 0.75;
+                            let targetPitch = 1.0;
+                            if (intensity > 0.85) {
+                                volMult = 1.15; // Strong gust
+                                targetPitch = 0.9;
+                            } else if (intensity > 0.4) {
+                                volMult = 0.75; // Normal
+                                targetPitch = 0.98;
+                            } else {
+                                volMult = 0.45; // Weak
+                                targetPitch = 1.08;
+                            }
+
+                            targetVol *= volMult;
+                            targetVol = Math.min(targetVol, 0.6);
+
+                            // Smoothly ramp to new volume and pitch
+                            const ctx = soundManager.audioContext;
+                            const t = ctx.currentTime;
+                            try {
+                                windObj.gainNode.gain.cancelScheduledValues(t);
+                                windObj.gainNode.gain.setValueAtTime(windObj.gainNode.gain.value, t);
+                                windObj.gainNode.gain.linearRampToValueAtTime(targetVol, t + 2.0); // 2 seconds ramp
+                                
+                                windObj.source.playbackRate.cancelScheduledValues(t);
+                                windObj.source.playbackRate.setValueAtTime(windObj.source.playbackRate.value, t);
+                                windObj.source.playbackRate.linearRampToValueAtTime(targetPitch, t + 2.0);
+                            } catch (e) {
+                                // Fallback
+                                windObj.gainNode.gain.value = targetVol;
+                                windObj.source.playbackRate.value = targetPitch;
+                            }
+
+                        }, 2500); // Check and vary every 2.5 seconds
+                    } catch (e) { console.warn('Failed to schedule wind calls', e); }
+
+                    // playSpatialWind: specialized helper that ensures mono-buffer and tuned panner for wind spatialization
+                    function playSpatialWind(soundName, position, volume = 1.0, pitch = 1.0) {
+                        try {
+                            if (!soundManager || !soundManager.audioContext) {
+                                soundManager && soundManager.playSound && soundManager.playSound(soundName, volume, false, pitch);
+                                return;
+                            }
+                            const ctx = soundManager.audioContext;
+                            let buffer = soundManager.loadedSounds ? soundManager.loadedSounds.get(soundName) : null;
+                            if (!buffer) {
+                                soundManager && soundManager.playSound && soundManager.playSound(soundName, volume, false, pitch);
+                                return;
+                            }
+
+                            // Convert stereo to mono for better spatialization
+                            try {
+                                if (buffer.numberOfChannels && buffer.numberOfChannels > 1) {
+                                    if (!soundManager._monoBuffers) soundManager._monoBuffers = new Map();
+                                    if (soundManager._monoBuffers.has(soundName)) {
+                                        buffer = soundManager._monoBuffers.get(soundName);
+                                    } else {
+                                        const channels = buffer.numberOfChannels;
+                                        const len = buffer.length;
+                                        const sr = buffer.sampleRate;
+                                        const mono = ctx.createBuffer(1, len, sr);
+                                        const out = mono.getChannelData(0);
+                                        for (let c = 0; c < channels; c++) {
+                                            const data = buffer.getChannelData(c);
+                                            for (let i = 0; i < len; i++) out[i] += data[i] / channels;
+                                        }
+                                        soundManager._monoBuffers.set(soundName, mono);
+                                        buffer = mono;
+                                    }
+                                }
+                            } catch (e) { /* ignore */ }
+
+                            const source = ctx.createBufferSource();
+                            source.buffer = buffer;
+                            try { source.playbackRate.value = pitch; } catch (e) {}
+
+                            const gain = ctx.createGain();
+                            // start at silence for fade-in
+                            try { gain.gain.setValueAtTime(0.0, ctx.currentTime); } catch (e) { gain.gain.value = 0.0; }
+                            source.connect(gain);
+
+                            const panner = (soundManager.createSpatialPanner) ? soundManager.createSpatialPanner() : null;
+                            if (panner) {
+                                try { panner.panningModel = 'HRTF'; } catch (e) {}
+                                try { panner.distanceModel = 'inverse'; } catch (e) {}
+                                try { panner.refDistance = 3; } catch (e) {}
+                                try { panner.maxDistance = 150; } catch (e) {}
+                                try { panner.rolloffFactor = 1.0; } catch (e) {}
+                                gain.connect(panner);
+                                panner.connect(soundManager.sfxGain || soundManager.masterGain || ctx.destination);
+                                if (soundManager.setPannerPosition && position) soundManager.setPannerPosition(panner, position);
+                                try { console.log(`🔊 playSpatialWind created panner for ${soundName} at ${position ? `${position.x.toFixed(1)},${position.y.toFixed(1)},${position.z.toFixed(1)}` : 'unknown'}`); } catch (e) {}
+                            } else {
+                                gain.connect(soundManager.sfxGain || soundManager.masterGain || ctx.destination);
+                                try { console.warn('🔈 playSpatialWind: no panner available; playing non-spatial'); } catch (e) {}
+                            }
+
+                            // Schedule fade-in and fade-out based on buffer duration
+                            try {
+                                const now = ctx.currentTime;
+                                const dur = buffer.duration || 2.0;
+                                // fade fractions (clamped)
+                                const fadeFraction = 0.12; // 12% of duration for fade in/out
+                                const minFade = 0.05; // seconds
+                                const maxFade = 1.5; // seconds
+                                const fadeIn = Math.min(maxFade, Math.max(minFade, dur * fadeFraction));
+                                const fadeOut = Math.min(maxFade, Math.max(minFade, dur * fadeFraction));
+                                const targetGain = volume;
+                                // ramp from 0 to target
+                                try {
+                                    gain.gain.cancelScheduledValues(now);
+                                    gain.gain.setValueAtTime(0.0, now);
+                                    gain.gain.linearRampToValueAtTime(targetGain, now + fadeIn);
+                                    // schedule fade out to 0 near end
+                                    const fadeOutStart = now + Math.max(0.01, dur - fadeOut);
+                                    gain.gain.setValueAtTime(targetGain, fadeOutStart);
+                                    gain.gain.linearRampToValueAtTime(0.0, now + dur + 0.05);
+                                } catch (e) { try { gain.gain.value = targetGain; } catch (e2) {} }
+
+                                source.start(now);
+                                // ensure source is stopped slightly after buffer end
+                                try { source.stop(now + dur + 0.1); } catch (e) { /* ignore */ }
+                            } catch (e) {
+                                // fallback: start immediately at volume
+                                try { gain.gain.value = volume; } catch (e2) {}
+                                source.start(0);
+                            }
+                        } catch (e) { console.warn('playSpatialWind failed', e); }
+                    }
+
+                    // Helper: play a sound buffer with optional spatial panner (falls back to simple playSound)
+                    function playSpatialSound(soundName, position, volume = 1.0, pitch = 1.0) {
+                        try {
+                            if (!soundManager || !soundManager.audioContext) {
+                                // fallback
+                                soundManager && soundManager.playSound && soundManager.playSound(soundName, volume, false, pitch);
+                                return;
+                            }
+
+                            const ctx = soundManager.audioContext;
+                            const buffer = soundManager.loadedSounds ? soundManager.loadedSounds.get(soundName) : null;
+                            if (!buffer) {
+                                // if not loaded yet, fallback
+                                soundManager && soundManager.playSound && soundManager.playSound(soundName, volume, false, pitch);
+                                return;
+                            }
+
+                            const source = ctx.createBufferSource();
+                            source.buffer = buffer;
+                            try { source.playbackRate.value = pitch; } catch (e) {}
+
+                            const gain = ctx.createGain();
+                            gain.gain.value = volume;
+
+                            source.connect(gain);
+
+                            const panner = (soundManager.createSpatialPanner) ? soundManager.createSpatialPanner() : null;
+                            if (panner) {
+                                gain.connect(panner);
+                                panner.connect(soundManager.sfxGain || soundManager.masterGain || ctx.destination);
+                                if (soundManager.setPannerPosition && position) {
+                                    soundManager.setPannerPosition(panner, position);
+                                }
+                            } else {
+                                gain.connect(soundManager.sfxGain || soundManager.masterGain || ctx.destination);
+                            }
+
+                            source.start(0);
+                        } catch (e) {
+                            console.warn('playSpatialSound failed', e);
+                            try { soundManager.playSound(soundName, volume, false, pitch); } catch (e2) {}
+                        }
+                    }
+
+                    // Schedule occasional bird calls at random intervals from different areas (prefer near trees when available)
+                    // Create multiple schedulers for simultaneous bird sounds from different locations
+                    function createBirdScheduler(schedulerId) {
+                        (function scheduleBirdCall() {
+                            const delay = 2 + Math.random() * 6; // 2-8s for more frequent calls
+                            setTimeout(async () => {
+                                try {
+                                    const pitch = 0.9 + Math.random() * 0.2;
+                                    let vol = 0.22 + Math.random() * 0.48; // variable volume
+
+                                    // Choose a random position: prefer positions near trees
+                                    let pos = null;
+                                    let usedTreePosition = false;
+                                    if (window.treeGroup) {
+                                        // Collect meshes that look like trunks/leaves
+                                        const candidates = [];
+                                        window.treeGroup.traverse((c) => { if (c.isMesh) candidates.push(c); });
+                                        if (candidates.length > 0) {
+                                            const t = candidates[Math.floor(Math.random() * candidates.length)];
+                                            const wp = new THREE.Vector3();
+                                            t.getWorldPosition(wp);
+                                            // Slight offset so the bird sound appears in canopy
+                                            wp.y += 6 + Math.random() * 4;
+                                            pos = wp;
+                                            usedTreePosition = true;
+                                        }
+                                    }
+                                    if (!pos) {
+                                        // Fallback: random point near lake center
+                                        pos = new THREE.Vector3((Math.random() - 0.5) * 200, 8 + Math.random() * 6, (Math.random() - 0.5) * 200);
+                                    }
+                                    if (usedTreePosition) {
+                                        vol = Math.min(0.95, vol * 1.25);
+                                    }
+
+                                    // Weighted bird selection: bird2 (mourningdove) plays much less frequently (5% chance)
+                                    let birdSound;
+                                    if (Math.random() < 0.05) {
+                                        birdSound = 'bird2';
+                                    } else {
+                                        // Select from all birds except bird2
+                                        const otherBirds = birdSoundNames.filter(b => b !== 'bird2');
+                                        birdSound = otherBirds[Math.floor(Math.random() * otherBirds.length)];
+                                    }
+                                    // Keep the mourning dove at normal or slightly
+                                    // faster speed so its call never drops in pitch.
+                                    const birdPitch = birdSound === 'bird2'
+                                        ? 1.0 + Math.random() * 0.08
+                                        : pitch;
+                                    playSpatialSound(birdSound, pos, vol, birdPitch);
+                                } catch (e) {
+                                    console.warn('Bird call failed', e);
+                                }
+                                scheduleBirdCall();
+                            }, delay * 1000);
+                        })();
+                    }
+
+                    // Create 6 independent bird schedulers for simultaneous sounds from different tree spots
+                    for (let i = 0; i < 6; i++) {
+                        createBirdScheduler(i);
+                    }
+
+                    // Helper: play a sound buffer with optional spatial panner (falls back to simple playSound)
+                    function playSpatialSound(soundName, position, volume = 1.0, pitch = 1.0) {
+                        try {
+                            if (!soundManager || !soundManager.audioContext) {
+                                // fallback
+                                soundManager && soundManager.playSound && soundManager.playSound(soundName, volume, false, pitch);
+                                return;
+                            }
+
+                            const ctx = soundManager.audioContext;
+                            const buffer = soundManager.loadedSounds ? soundManager.loadedSounds.get(soundName) : null;
+                            if (!buffer) {
+                                // if not loaded yet, fallback
+                                soundManager && soundManager.playSound && soundManager.playSound(soundName, volume, false, pitch);
+                                return;
+                            }
+
+                            const source = ctx.createBufferSource();
+                            source.buffer = buffer;
+                            try { source.playbackRate.value = pitch; } catch (e) {}
+
+                            const gain = ctx.createGain();
+                            gain.gain.value = volume;
+
+                            source.connect(gain);
+
+                            const panner = (soundManager.createSpatialPanner) ? soundManager.createSpatialPanner() : null;
+                            if (panner) {
+                                gain.connect(panner);
+                                panner.connect(soundManager.sfxGain || soundManager.masterGain || ctx.destination);
+                                if (soundManager.setPannerPosition && position) {
+                                    soundManager.setPannerPosition(panner, position);
+                                }
+                            } else {
+                                gain.connect(soundManager.sfxGain || soundManager.masterGain || ctx.destination);
+                            }
+
+                            source.start(0);
+                        } catch (e) {
+                            console.warn('playSpatialSound failed', e);
+                            try { soundManager.playSound(soundName, volume, false, pitch); } catch (e2) {}
+                        }
+                    }
+
                 });
             }
             // Hook up mobile button listener for entering/exiting the UTV or JetSki
@@ -2468,7 +3505,8 @@
                 });
             }
             // Événements de souris pour le contrôle de la caméra en mode capsule
-            document.addEventListener('mousemove', handleMouseMove);
+            // Use Pointer Events so mouse movement is captured even when no button is pressed
+            window.addEventListener('pointermove', handleMouseMove, { passive: true });
 
             // Touch swipe camera control
             let lastTouchX = 0;
@@ -2540,18 +3578,63 @@
                     }
                 }
             });
+            function canUsePointerLock() {
+                return (gameMode === 'capsule' || gameMode === 'fishing' || gameMode === 'zipline' || gameMode === 'vehicle' || gameMode === 'jetski') && !useOrbitControl;
+            }
+            function isInteractiveElement(target) {
+                if (!target || target.nodeType !== 1) return false;
+                return target.closest && target.closest('button, a, input, select, textarea, [role="button"], [data-action="button"]');
+            }
+            function requestCameraPointerLock() {
+                if (!canUsePointerLock()) return false;
+                userGestureReceived = true;
+                const target = renderer && renderer.domElement ? renderer.domElement : document.body;
+                try {
+                    if (target && typeof target.requestPointerLock === 'function') {
+                        target.requestPointerLock();
+                        return true;
+                    }
+                } catch (e) {}
+                try {
+                    if (document.body && typeof document.body.requestPointerLock === 'function') {
+                        document.body.requestPointerLock();
+                        return true;
+                    }
+                } catch (e) {}
+                try {
+                    if (document.documentElement && typeof document.documentElement.requestPointerLock === 'function') {
+                        document.documentElement.requestPointerLock();
+                        return true;
+                    }
+                } catch (e) {}
+                return false;
+            }
             document.addEventListener('pointerlockchange', () => {
-                if (document.pointerLockElement === document.body) {
-                    capsuleCamera.enabled = true;
-                    console.log('🖱️ Pointer lock activé');
-                } else {
-                    capsuleCamera.enabled = false;
-                    console.log('🖱️ Pointer lock désactivé');
-                }
+                const lockedEl = document.pointerLockElement;
+                capsuleCamera.enabled = !!lockedEl;
+                // Reset last mouse positions so clientX deltas don't produce jumps when entering/exiting lock
+                lastMouseX = null; lastMouseY = null;
+                console.log('🖱️ Pointer lock', capsuleCamera.enabled ? 'activé' : 'désactivé', lockedEl ? `(${lockedEl.tagName}${lockedEl.id ? '#' + lockedEl.id : ''})` : '');
             });
-            document.addEventListener('click', () => {
-                if ((gameMode === 'capsule' || gameMode === 'fishing' || gameMode === 'zipline' ||  gameMode === 'vehicle' || gameMode === 'jetski') && !capsuleCamera.enabled && !useOrbitControl) { 
-                    document.body.requestPointerLock();
+            // Request pointer lock on mousedown inside the renderer area so mouse movement becomes relative
+            (function enablePointerLockOnDown() {
+                const target = renderer && renderer.domElement ? renderer.domElement : document.body;
+                target.addEventListener('mousedown', (ev) => {
+                    if (ev.button !== 0) return; // left button only
+                    if (isInteractiveElement(ev.target)) return;
+                    if (requestCameraPointerLock()) {
+                        // Resume audio context on user gesture so spatial audio can play
+                        try { if (window.soundManager && typeof window.soundManager.resumeAudioContext === 'function') window.soundManager.resumeAudioContext(); } catch (e) {}
+                    }
+                });
+            })();
+
+            document.addEventListener('mousedown', (event) => {
+                if (event.button !== 0) return;
+                if (isInteractiveElement(event.target)) return;
+                if (document.pointerLockElement) return;
+                if (requestCameraPointerLock()) {
+                    try { if (window.soundManager && typeof window.soundManager.resumeAudioContext === 'function') window.soundManager.resumeAudioContext(); } catch (e) {}
                 }
             });
             document.addEventListener('keydown', (event) => {
@@ -2581,8 +3664,247 @@
             });
             window.addEventListener('resize', onWindowResize);
         }
-        const DISPLACEMENT = 37.5; // Max height of terrain in world units (adjust based on actual height map range)
-        const OFFSET = -20;
+
+        // Load terrain-anchored models only after the height map and terrain
+        // mesh are ready, so their initial height query cannot use the fallback.
+        function loadTerrainAnchoredModels() {
+            console.log('[startup] Terrain ready; placing anchored models', {
+                heightDataReady: !!terrainManager.heightData,
+                welcomeCenterGroundY: getTerrainHeightAt({ x: 85, z: -10 })
+            });
+            loadEntranceFirePlace();
+            loadChapel();
+            loadWelcomeCenter();
+            loadBoysDorm();
+            loadGirlsDorm();
+            loadCampFirePlace();
+            loadCabinAcrossGirlsBunker();
+            loadPavilion();
+            loadPickleball();
+            loadZipLineTower();
+            loadFlyingEagle();
+            loadRaceTrack();
+            loadRaceTrackBuilding1();
+            loadRaceTrackBuilding2();
+            loadGoKart();
+            loadStands();
+            loadWater_Slide();
+            loadWater_Games();
+            loadToiletCabinLeftBeach();
+            loadFenceFromMask();
+            loadBuildingDockSplat();
+            jetSkiManager.loadVehicle(scene);
+
+            if (vehicleManager && typeof vehicleManager.loadVehicle === 'function') {
+                try { vehicleManager.loadVehicle(scene); }
+                catch (e) { console.warn('VehicleManager.loadVehicle error', e); }
+            } else {
+                (async () => {
+                    try {
+                        const m = await import('./src/core/VehicleManager.js');
+                        vehicleManager = m.vehicleManager;
+                        window.vehicleManager = vehicleManager;
+                        if (vehicleManager && typeof vehicleManager.loadVehicle === 'function') vehicleManager.loadVehicle(scene);
+                    } catch (e) {
+                        console.warn('VehicleManager dynamic import failed:', e);
+                    }
+                })();
+            }
+        }
+
+        // Trace the white centerlines in SW_Fence.png and build a modest white
+        // picket fence that follows the terrain. Each sampled line point is
+        // converted to the same world coordinates used by the terrain masks.
+        function loadFenceFromMask() {
+            textureLoader.load(fencePath, (texture) => {
+                const image = texture.image;
+                if (!image || !image.width || !terrainManager.heightData) return;
+
+                const canvas = document.createElement('canvas');
+                canvas.width = image.width;
+                canvas.height = image.height;
+                const context = canvas.getContext('2d', { willReadFrequently: true });
+                context.drawImage(image, 0, 0);
+                const pixels = context.getImageData(0, 0, image.width, image.height).data;
+                const width = image.width;
+                const height = image.height;
+                const isLine = (x, y) => {
+                    if (x < 0 || y < 0 || x >= width || y >= height) return false;
+                    const i = (y * width + x) * 4;
+                    return pixels[i + 3] > 32 && pixels[i] > 200 && pixels[i + 1] > 200 && pixels[i + 2] > 200;
+                };
+                const toWorld = (x, y) => new THREE.Vector3(
+                    x / (width - 1) * 1000 - 500,
+                    0,
+                    y / (height - 1) * 1000 - 500
+                );
+
+                // Keep the original pixels too: use a center pixel for each local
+                // block of the drawn stroke, yielding a stable centerline trace.
+                const centerPixels = [];
+                const cellSize = 3;
+                for (let y = 0; y < height; y += cellSize) {
+                    for (let x = 0; x < width; x += cellSize) {
+                        let sx = 0, sy = 0, count = 0;
+                        for (let yy = y; yy < Math.min(height, y + cellSize); yy++) {
+                            for (let xx = x; xx < Math.min(width, x + cellSize); xx++) {
+                                if (isLine(xx, yy)) { sx += xx; sy += yy; count++; }
+                            }
+                        }
+                        if (count) centerPixels.push({ x: sx / count, y: sy / count });
+                    }
+                }
+
+                // Cluster adjacent occupied cells into independent runs. Order
+                // each run by nearest neighbor and join consecutive fence panels.
+                const cells = new Map();
+                for (const p of centerPixels) cells.set(`${Math.round(p.x / cellSize)},${Math.round(p.y / cellSize)}`, p);
+                const seen = new Set();
+                const runs = [];
+                for (const [key, start] of cells) {
+                    if (seen.has(key)) continue;
+                    const stack = [start], run = [];
+                    seen.add(key);
+                    while (stack.length) {
+                        const p = stack.pop(); run.push(p);
+                        const cx = Math.round(p.x / cellSize), cy = Math.round(p.y / cellSize);
+                        for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+                            const nextKey = `${cx + ox},${cy + oy}`;
+                            if (!seen.has(nextKey) && cells.has(nextKey)) { seen.add(nextKey); stack.push(cells.get(nextKey)); }
+                        }
+                    }
+                    if (run.length > 1) runs.push(run);
+                }
+
+                const fenceGroup = new THREE.Group();
+                fenceGroup.name = 'MaskFence';
+                const textureLoaderForFence = new THREE.TextureLoader();
+                textureLoaderForFence.load('FenceTexture.png', (plankTexture) => {
+                    plankTexture.colorSpace = THREE.SRGBColorSpace;
+                    plankTexture.wrapS = THREE.RepeatWrapping;
+                    plankTexture.wrapT = THREE.RepeatWrapping;
+                    // The fence is decorative and does not cast shadows, so use
+                    // unlit materials to keep the many visible pickets inexpensive.
+                    const material = new THREE.MeshBasicMaterial({ color: 0xffffff, map: plankTexture });
+                    const postMaterial = new THREE.MeshBasicMaterial({ color: 0xf4f4f0 });
+                    const plankWidth = 0.18, fenceHeight = 2.1, panelSpacing = 0.2;
+                    const plankGeometry = new THREE.BoxGeometry(plankWidth, fenceHeight, 0.055);
+                    const postGeometry = new THREE.BoxGeometry(0.14, fenceHeight + 0.12, 0.14);
+                    const chunkSize = 100;
+                    const plankChunks = new Map(), postChunks = new Map();
+                    const instanceTransform = new THREE.Object3D();
+                    const getChunk = (chunks, x, z) => {
+                        const originX = Math.floor(x / chunkSize) * chunkSize;
+                        const originZ = Math.floor(z / chunkSize) * chunkSize;
+                        const key = `${originX},${originZ}`;
+                        if (!chunks.has(key)) chunks.set(key, { originX, originZ, matrices: [] });
+                        return chunks.get(key);
+                    };
+
+                    for (const run of runs) {
+                        // Walk adjacent mask cells directly. The previous nearest
+                        // point scan compared every sample with every remaining
+                        // sample, making fence setup quadratic for long lines.
+                        const remaining = new Map(run.map(p => [
+                            `${Math.round(p.x / cellSize)},${Math.round(p.y / cellSize)}`, p
+                        ]));
+                        const ordered = [];
+                        let currentKey = remaining.keys().next().value;
+                        while (remaining.size) {
+                            const current = remaining.get(currentKey);
+                            if (current) {
+                                ordered.push(current);
+                                remaining.delete(currentKey);
+                            }
+                            const [cx, cy] = currentKey.split(',').map(Number);
+                            let nextKey = null, bestDistance = Infinity;
+                            for (let oy = -1; oy <= 1; oy++) for (let ox = -1; ox <= 1; ox++) {
+                                if (!ox && !oy) continue;
+                                const candidateKey = `${cx + ox},${cy + oy}`;
+                                const candidate = remaining.get(candidateKey);
+                                if (!candidate) continue;
+                                const dx = candidate.x - current.x, dy = candidate.y - current.y;
+                                const distance = dx * dx + dy * dy;
+                                if (distance < bestDistance) { bestDistance = distance; nextKey = candidateKey; }
+                            }
+                            // Components are connected, but restart safely if a
+                            // mask gap is encountered instead of stalling.
+                            currentKey = nextKey || remaining.keys().next().value;
+                        }
+                        const rawPoints = ordered.map(p => toWorld(p.x, p.y));
+                        // Average over neighboring mask samples to remove the
+                        // pixel-scale left/right wobble before orienting pickets.
+                        const points = rawPoints.map((point, index) => {
+                            const smoothed = new THREE.Vector3();
+                            let samples = 0;
+                            for (let offset = -3; offset <= 3; offset++) {
+                                const neighbor = rawPoints[index + offset];
+                                if (!neighbor) continue;
+                                smoothed.add(neighbor);
+                                samples++;
+                            }
+                            return smoothed.multiplyScalar(1 / samples);
+                        });
+                        let distanceSincePlank = 0;
+                        let lastPost = null;
+                        for (let i = 1; i < points.length; i++) {
+                            const a = points[i - 1], b = points[i];
+                            const dx = b.x - a.x, dz = b.z - a.z;
+                            const length = Math.hypot(dx, dz);
+                            if (length < 0.05 || length > 8) continue;
+                            const angle = Math.atan2(dz, dx);
+                            const midpoint = new THREE.Vector3((a.x + b.x) / 2, 0, (a.z + b.z) / 2);
+                            midpoint.y = terrainManager.getGroundHeightAt(midpoint);
+                            const panelCount = Math.max(1, Math.ceil((length + distanceSincePlank) / panelSpacing));
+                            for (let j = 0; j < panelCount; j++) {
+                                const t = (j + 0.5) / panelCount;
+                                const x = THREE.MathUtils.lerp(a.x, b.x, t);
+                                const z = THREE.MathUtils.lerp(a.z, b.z, t);
+                                const groundY = terrainManager.getGroundHeightAt({ x, z });
+                                const chunk = getChunk(plankChunks, x, z);
+                                instanceTransform.position.set(x - chunk.originX, groundY + fenceHeight / 2, z - chunk.originZ);
+                                instanceTransform.rotation.set(0, -angle, 0);
+                                instanceTransform.updateMatrix();
+                                chunk.matrices.push(instanceTransform.matrix.clone());
+                            }
+                            if (!lastPost || lastPost.distanceTo(midpoint) >= 2.2) {
+                                const chunk = getChunk(postChunks, midpoint.x, midpoint.z);
+                                instanceTransform.position.set(midpoint.x - chunk.originX, midpoint.y + (fenceHeight + 0.12) / 2, midpoint.z - chunk.originZ);
+                                instanceTransform.rotation.set(0, 0, 0);
+                                instanceTransform.updateMatrix();
+                                chunk.matrices.push(instanceTransform.matrix.clone());
+                                lastPost = midpoint;
+                            }
+                            distanceSincePlank = (distanceSincePlank + length) % panelSpacing;
+                        }
+                    }
+                    const addChunkMeshes = (chunks, geometry, chunkMaterial) => {
+                        for (const chunk of chunks.values()) {
+                            if (!chunk.matrices.length) continue;
+                            const instances = new THREE.InstancedMesh(geometry, chunkMaterial, chunk.matrices.length);
+                            chunk.matrices.forEach((matrix, index) => instances.setMatrixAt(index, matrix));
+                            instances.instanceMatrix.needsUpdate = true;
+                            // Keep fence rendering cheap; sections outside the
+                            // camera frustum are now culled independently.
+                            instances.castShadow = false;
+                            instances.receiveShadow = false;
+                            instances.userData.noCollision = true;
+                            const chunkGroup = new THREE.Group();
+                            chunkGroup.position.set(chunk.originX, 0, chunk.originZ);
+                            chunkGroup.add(instances);
+                            fenceGroup.add(chunkGroup);
+                        }
+                    };
+                    addChunkMeshes(plankChunks, plankGeometry, material);
+                    addChunkMeshes(postChunks, postGeometry, postMaterial);
+                    scene.add(fenceGroup);
+                    console.log(`✅ Fence built from SW_Fence.png (${runs.length} line groups)`);
+                }, undefined, (error) => {
+                    console.warn('Fence texture failed to load; using plain white planks', error);
+                });
+            }, undefined, (error) => console.error('Fence mask failed to load:', error));
+        }
+
         function createDummyTexture() {
             // Create a white texture (no roads/buildings until real textures load)
             const canvas = document.createElement('canvas');
@@ -2596,6 +3918,14 @@
             return texture;
         }
         function loadTerrain() {
+            // Wait for the lake mask before loading/building the terrain. The
+            // mask changes heightData, so terrain and buildings must use the
+            // same final height values during the initial build.
+            if (!terrainManager.lakeBoundaryData) {
+                setTimeout(loadTerrain, 50);
+                return;
+            }
+
             textureLoader.load(
                 heightMapPath,
                 (texture) => {
@@ -2645,12 +3975,22 @@
                     terrainMesh.scale.y = -1;
                     terrainMesh.material.side = THREE.DoubleSide;
                     scene.add(terrainMesh);
+                    loadTerrainAnchoredModels();
                     isTerrainLoaded = true;
                     environmentManager.createRoadOverlay();
                     environmentManager.createBeachOverlay();
                     environmentManager.createBuildingOverlay(refreshCollisionObjects);
                     environmentManager.createTreeOverlay(refreshCollisionObjects);
                     initializeGameMode();
+                    // Initialize lake fish manager once terrain and overlays are set
+                    if (typeof lakeAquaticManager !== 'undefined' && lakeAquaticManager && typeof lakeAquaticManager.init === 'function') {
+                        try {
+                            lakeAquaticManager.init(scene, terrainManager, terrainManager.WATER_LEVEL || WATER_LEVEL);
+                            window.lakeAquaticManager = lakeAquaticManager;
+                        } catch (e) {
+                            console.warn('lakeAquaticManager.init failed', e);
+                        }
+                    }
                     console.log('✅ Terrain loaded with height-blended beach + shadows');
                 },
                 undefined,
@@ -2740,6 +4080,11 @@
             }
             const delta = clock.getDelta();
 
+            // Update gamepad input
+            if (typeof inputManager !== 'undefined' && inputManager.updateGamepad) {
+                inputManager.updateGamepad();
+            }
+
             // Update shadow camera to follow player
             if (capsulePlayer && dirLight) {
                 dirLight.target.position.copy(capsulePlayer.position);
@@ -2796,7 +4141,8 @@
                             vehicleManager.vehicle.position.y + 3.8,
                             vehicleManager.vehicle.position.z - forwardZ * 9
                         );
-                        camera.position.lerp(camTargetPos, 0.08);
+                        const followAlpha = 1 - Math.exp(-14 * delta);
+                        camera.position.lerp(camTargetPos, followAlpha);
                         // Look slightly in front of the vehicle center
                         const lookTarget = new THREE.Vector3(
                             vehicleManager.vehicle.position.x + forwardX * 2,
@@ -2829,22 +4175,24 @@
                         camera.position.copy(eyePos);
                         camera.lookAt(eyePos.clone().addScaledVector(lookDir, 10));
                     } else {
-                        // Third-person free look
+                    // Third-person follow camera (more like open-world)
                         const distance = 6;
-                        const verticalOffset = distance * Math.sin(jetSkiManager.cameraPitch);
-                        const horizontalDistance = distance * Math.cos(jetSkiManager.cameraPitch);
+                    const verticalOffset = Math.max(1, distance * Math.sin(jetSkiManager.cameraPitch));
+                    const horizontalDistance = Math.max(2.5, distance * Math.cos(jetSkiManager.cameraPitch));
                         const cameraOffsetX = -horizontalDistance * Math.sin(jetSkiManager.cameraYaw);
                         const cameraOffsetZ = -horizontalDistance * Math.cos(jetSkiManager.cameraYaw);
                         const camTargetPos = new THREE.Vector3(
                             jetSkiManager.vehicle.position.x + cameraOffsetX,
-                            jetSkiManager.vehicle.position.y + 2.5 + verticalOffset,
+                        jetSkiManager.vehicle.position.y + 2.4 + verticalOffset,
                             jetSkiManager.vehicle.position.z + cameraOffsetZ
                         );
-                        camera.position.lerp(camTargetPos, 0.15);
-                        const lookTarget = jetSkiManager.vehicle.position.clone();
-                        lookTarget.y += 1.0;
-                        camera.lookAt(lookTarget);
-                    }
+                    // Use stronger lerp so camera follows the jetski more responsively
+                    const followAlpha = 1 - Math.exp(-18 * delta);
+                    camera.position.lerp(camTargetPos, followAlpha);
+                    const lookTarget = jetSkiManager.vehicle.position.clone();
+                    lookTarget.y += 1.2;
+                    camera.lookAt(lookTarget);
+                }
                 }
             }
 
@@ -2861,6 +4209,26 @@
             if (water && water.material.uniforms['time']) {
                 water.material.uniforms['time'].value += delta;
             }
+
+            // 3. Animate tree wind swaying
+            if (environmentManager && typeof environmentManager.updateTrees === 'function') {
+                environmentManager.updateTrees(clock.getElapsedTime());
+            }
+
+            // Smoothly adjust camera FOV based on game mode to make distant objects appear closer when in-character
+            try {
+                const desiredFovInGame = 44; // narrower FOV makes the world appear 'closer' — stronger effect
+                const normalFov = 60; // default when not in player-centric mode
+                const targetFov = (gameMode === 'capsule' || gameMode === 'fishing' || gameMode === 'jetski' || gameMode === 'zipline') ? desiredFovInGame : normalFov;
+                // interpolate FOV smoothly but not too slowly so the user notices the change
+                const fovLerp = 0.12;
+                if (Math.abs(camera.fov - targetFov) > 0.05) {
+                    camera.fov += (targetFov - camera.fov) * fovLerp;
+                    camera.updateProjectionMatrix();
+                }
+            } catch (e) { console.warn('FOV smoothing failed', e); }
+
+            // Only update if the model has finished loading and controller exists
             // Only update if the model has finished loading and controller exists
             if (eagleFlightController) {
                 eagleFlightController.update(delta);
@@ -2870,14 +4238,14 @@
             if (window.fishingManager && typeof window.fishingManager.update === 'function') {
                 try { window.fishingManager.update(delta); } catch (e) { console.warn('fishingManager.update error', e); }
             }
-            // Update Gaussian Splatting viewers for correct depth sorting
-            if (splatViewers && splatViewers.length > 0) {
-                splatViewers.forEach(viewer => {
-                    if (viewer && typeof viewer.update === 'function') {
-                        viewer.update();
-                    }
-                });
+
+            // Update lake fish simulation
+            if (window.lakeAquaticManager && typeof window.lakeAquaticManager.update === 'function') {
+                try { window.lakeAquaticManager.update(delta); } catch (e) { console.warn('lakeAquaticManager.update error', e); }
             }
+
+            // DropInViewer updates itself from Three.js's onBeforeRender hook.
+            // Calling viewer.update() here as well duplicates sorting every frame.
             renderer.render(scene, camera);
         }
         function updateWakeMesh(delta) {
