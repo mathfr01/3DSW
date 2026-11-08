@@ -185,21 +185,18 @@ export class VehicleManager {
             // Initial rotation matching target heading direction
             this.vehicle.rotation.y = this.heading - (20 * Math.PI / 180);
 
-            // Enable gorgeous real-time shadows
+            // Preserve the GLB's authored surface response, but keep its
+            // geometry participating in the scene's real-time shadows.
             visualMesh.traverse((child) => {
                 if (child.isMesh) {
                     child.castShadow = true;
                     child.receiveShadow = true;
-                    // Boost ambient readability
-                    if (child.material) {
-                        child.material.roughness = 0.6;
-                        child.material.metalness = 0.4;
-                    }
                 }
             });
             
 
-            if (window.enhanceGLTFMaterials) window.enhanceGLTFMaterials(visualMesh);
+            if (window.enhanceVehicleMaterials) window.enhanceVehicleMaterials(visualMesh, 'utv');
+            else if (window.enhanceGLTFMaterials) window.enhanceGLTFMaterials(visualMesh);
             scene.add(this.vehicle);
             console.log(`✅ Side-by-Side UTV loaded. Dynamically scaled by ${computedScale.toFixed(4)} (raw length: ${rawLength.toFixed(2)})`);
             
@@ -322,7 +319,7 @@ export class VehicleManager {
      * Resolves realistic collisions with buildings, trees, and other solid scene meshes.
      */
     resolveVehicleCollisions() {
-        if (!this.vehicle || !window.collisionObjects || !window.collisionObjects.length) return;
+        if (!this.vehicle) return;
 
         const isDescendant = (child, parent) => {
             let node = child.parent;
@@ -337,6 +334,13 @@ export class VehicleManager {
         // The vehicle is roughly 1.5m wide and 3.0m long.
         // A collision radius of ~1.2m represents a safe bounding cylinder for sliding.
         const minDist = 1.2;
+
+        // Fences use lightweight centerline segments rather than visible
+        // pickets as colliders, matching the capsule player's barrier.
+        if (typeof window.resolveFenceCollision === 'function' && window.resolveFenceCollision(vehiclePos, minDist)) {
+            this.speed = Math.abs(this.speed) > 1.0 ? -this.speed * 0.15 : 0;
+        }
+        if (!window.collisionObjects || !window.collisionObjects.length) return;
 
         for (const object of window.collisionObjects) {
             // Avoid colliding with the vehicle itself

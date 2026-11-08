@@ -24,6 +24,8 @@ class TerrainManager {
 
         // References to generated Three.js textures
         this.roadTexture = null;
+        this.roadMaskTexture = null;
+        this.asphaltTexture = null;
         this.beachTexture = null;
 
         this.isTerrainLoaded = false;
@@ -111,17 +113,62 @@ class TerrainManager {
     }
 
     applyRoadTexture(mesh) {
-        const texture = new THREE.CanvasTexture(this.roadsCanvas);
-        texture.flipY = false;
-        texture.needsUpdate = true;
+        if (!this.roadsData || !this.roadsCanvas.width) return;
 
-        mesh.material = new THREE.MeshBasicMaterial({
-            color: 0x000000,
-            map: texture,
+        if (!this.asphaltTexture) {
+            const asphaltCanvas = document.createElement('canvas');
+            asphaltCanvas.width = 512;
+            asphaltCanvas.height = 512;
+            const asphaltContext = asphaltCanvas.getContext('2d');
+            const asphaltPixels = asphaltContext.createImageData(512, 512);
+            for (let i = 0; i < asphaltPixels.data.length; i += 4) {
+                const grain = (Math.random() - 0.5) * 24;
+                const fleck = Math.random() < 0.055 ? (Math.random() < 0.5 ? -24 : 22) : 0;
+                const value = Math.max(38, Math.min(132, 83 + grain + fleck));
+                asphaltPixels.data[i] = value;
+                asphaltPixels.data[i + 1] = value;
+                asphaltPixels.data[i + 2] = value + (Math.random() < 0.2 ? 1 : 0);
+                asphaltPixels.data[i + 3] = 255;
+            }
+            asphaltContext.putImageData(asphaltPixels, 0, 0);
+            this.asphaltTexture = new THREE.CanvasTexture(asphaltCanvas);
+            this.asphaltTexture.colorSpace = THREE.SRGBColorSpace;
+            this.asphaltTexture.wrapS = THREE.RepeatWrapping;
+            this.asphaltTexture.wrapT = THREE.RepeatWrapping;
+            this.asphaltTexture.repeat.set(180, 180);
+            this.asphaltTexture.anisotropy = 8;
+
+            const maskCanvas = document.createElement('canvas');
+            maskCanvas.width = this.roadsCanvas.width;
+            maskCanvas.height = this.roadsCanvas.height;
+            const maskContext = maskCanvas.getContext('2d');
+            const maskPixels = maskContext.createImageData(maskCanvas.width, maskCanvas.height);
+            for (let i = 0; i < this.roadsData.length; i += 4) {
+                const roadCoverage = this.roadsData[i + 3];
+                maskPixels.data[i] = 255;
+                maskPixels.data[i + 1] = roadCoverage;
+                maskPixels.data[i + 2] = 255;
+                maskPixels.data[i + 3] = 255;
+            }
+            maskContext.putImageData(maskPixels, 0, 0);
+            this.roadMaskTexture = new THREE.CanvasTexture(maskCanvas);
+            this.roadMaskTexture.flipY = false;
+            this.roadMaskTexture.needsUpdate = true;
+        }
+
+        mesh.material = new THREE.MeshStandardMaterial({
+            color: 0xffffff,
+            map: this.asphaltTexture,
+            alphaMap: this.roadMaskTexture,
             transparent: true,
-            alphaTest: 0.8,
-            side: THREE.DoubleSide
+            alphaTest: 0.35,
+            side: THREE.DoubleSide,
+            roughness: 0.94,
+            metalness: 0.02,
+            bumpMap: this.asphaltTexture,
+            bumpScale: 0.018
         });
+        mesh.material.needsUpdate = true;
         console.log('✅ Roads texture applied from TerrainManager');
     }
 

@@ -133,14 +133,11 @@ export class JetSkiManager {
                 if (child.isMesh) {
                     child.castShadow = true;
                     child.receiveShadow = true;
-                    if (child.material) {
-                        child.material.roughness = 0.4; // Glossy wet look
-                        child.material.metalness = 0.5;
-                    }
                 }
             });
 
-            if (window.enhanceGLTFMaterials) window.enhanceGLTFMaterials(visualMesh);
+            if (window.enhanceVehicleMaterials) window.enhanceVehicleMaterials(visualMesh, 'jetski');
+            else if (window.enhanceGLTFMaterials) window.enhanceGLTFMaterials(visualMesh);
             scene.add(this.vehicle);
             console.log(`✅ JetSki loaded. Dynamically scaled by ${computedScale.toFixed(4)}`);
 

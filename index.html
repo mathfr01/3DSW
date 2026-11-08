@@ -576,6 +576,9 @@
         let environmentManager;
         let sun;
         let dirLight;
+        let hemiLight;
+        let ambientLight;
+        let weatherSystem = null;
         // Système de modes de jeu
         let gameMode = 'capsule';
         let capsulePlayer = null;
@@ -630,15 +633,16 @@
                 }
             }
         }
-        function resolveFenceCollisions() {
-            if (!capsulePlayer || fenceCollisionCells.size === 0) return;
-            const playerPos = capsulePlayer.position;
-            const radius = capsuleRadius + (capsuleCollisionPadding || 0.1) + 0.04;
-            const cellX = Math.floor(playerPos.x / fenceCollisionCellSize);
-            const cellZ = Math.floor(playerPos.z / fenceCollisionCellSize);
+        function applyFenceCollision(position, radius) {
+            if (!position || fenceCollisionCells.size === 0) return false;
+            let collided = false;
             const frame = ++fenceCollisionFrame;
-            for (let x = cellX - 1; x <= cellX + 1; x++) {
-                for (let z = cellZ - 1; z <= cellZ + 1; z++) {
+            const minCellX = Math.floor((position.x - radius) / fenceCollisionCellSize);
+            const maxCellX = Math.floor((position.x + radius) / fenceCollisionCellSize);
+            const minCellZ = Math.floor((position.z - radius) / fenceCollisionCellSize);
+            const maxCellZ = Math.floor((position.z + radius) / fenceCollisionCellSize);
+            for (let x = minCellX; x <= maxCellX; x++) {
+                for (let z = minCellZ; z <= maxCellZ; z++) {
                     const segments = fenceCollisionCells.get(`${x},${z}`);
                     if (!segments) continue;
                     for (const segment of segments) {
@@ -648,28 +652,36 @@
                         const dz = segment.bz - segment.az;
                         const lengthSq = dx * dx + dz * dz;
                         if (lengthSq < 0.0025) continue;
-                        const t = THREE.MathUtils.clamp(((playerPos.x - segment.ax) * dx + (playerPos.z - segment.az) * dz) / lengthSq, 0, 1);
+                        const t = THREE.MathUtils.clamp(((position.x - segment.ax) * dx + (position.z - segment.az) * dz) / lengthSq, 0, 1);
                         const closestX = segment.ax + dx * t;
                         const closestZ = segment.az + dz * t;
-                        const diffX = playerPos.x - closestX;
-                        const diffZ = playerPos.z - closestZ;
+                        const diffX = position.x - closestX;
+                        const diffZ = position.z - closestZ;
                         const distSq = diffX * diffX + diffZ * diffZ;
                         if (distSq >= radius * radius) continue;
                         const distance = Math.sqrt(distSq);
                         const overlap = radius - distance;
                         if (distance > 1e-5) {
-                            playerPos.x += diffX / distance * overlap;
-                            playerPos.z += diffZ / distance * overlap;
+                            position.x += diffX / distance * overlap;
+                            position.z += diffZ / distance * overlap;
                         } else {
                             const invLength = 1 / Math.sqrt(lengthSq);
-                            const side = (playerPos.x - segment.ax) * (-dz * invLength) + (playerPos.z - segment.az) * (dx * invLength) < 0 ? -1 : 1;
-                            playerPos.x += -dz * invLength * overlap * side;
-                            playerPos.z += dx * invLength * overlap * side;
+                            const side = (position.x - segment.ax) * (-dz * invLength) + (position.z - segment.az) * (dx * invLength) < 0 ? -1 : 1;
+                            position.x += -dz * invLength * overlap * side;
+                            position.z += dx * invLength * overlap * side;
                         }
-                        capsulePhysics.velocity.x = 0;
-                        capsulePhysics.velocity.z = 0;
+                        collided = true;
                     }
                 }
+            }
+            return collided;
+        }
+        window.resolveFenceCollision = applyFenceCollision;
+        function resolveFenceCollisions() {
+            if (!capsulePlayer) return;
+            if (applyFenceCollision(capsulePlayer.position, capsuleRadius + capsuleCollisionPadding + 0.04)) {
+                capsulePhysics.velocity.x = 0;
+                capsulePhysics.velocity.z = 0;
             }
         }
         function registerCollisionObject(object) { 
@@ -1654,6 +1666,64 @@
             });
         }
         window.enhanceGLTFMaterials = enhanceGLTFMaterials;
+
+        function enhanceVehicleMaterials(object, vehicleType) {
+            const envMapIntensity = vehicleType === 'jetski' ? 0.48 : 0.38;
+            enhanceGLTFMaterials(object, { envMapIntensity });
+            object.traverse((child) => {
+                if (!child.isMesh || !child.material) return;
+                child.castShadow = true;
+                child.receiveShadow = true;
+                const materials = Array.isArray(child.material) ? child.material : [child.material];
+                for (const material of materials) {
+                    if (!material) continue;
+                    const label = `${child.name || ''} ${material.name || ''}`.toLowerCase();
+                    if (material.envMap) material.envMapIntensity = envMapIntensity;
+
+                    if (/tire|tyre|rubber|wheel|footpad/.test(label)) {
+                        material.roughness = 0.88;
+                        material.metalness = 0.02;
+                    } else if (/glass|window|windshield|windscreen/.test(label)) {
+                        material.roughness = 0.16;
+                        material.metalness = 0.0;
+                        if (material.isMeshPhysicalMaterial) {
+                            material.clearcoat = 0.5;
+                            material.clearcoatRoughness = 0.12;
+                        }
+                    } else if (/seat|fabric|foam|rubber.?mat/.test(label)) {
+                        material.roughness = 0.76;
+                        material.metalness = 0.0;
+                    } else if (/chrome|metal|frame|roll.?bar|handlebar|trim/.test(label)) {
+                        material.roughness = 0.3;
+                        material.metalness = 0.68;
+                    } else if (vehicleType === 'jetski' && /hull|body|fairing|cowling|shell/.test(label)) {
+                        material.roughness = 0.28;
+                        material.metalness = 0.12;
+                        if (material.isMeshPhysicalMaterial) {
+                            material.clearcoat = 0.72;
+                            material.clearcoatRoughness = 0.18;
+                        }
+                    } else if (vehicleType === 'utv' && /body|paint|hood|door|fender|panel/.test(label)) {
+                        material.roughness = 0.34;
+                        material.metalness = 0.16;
+                        if (material.isMeshPhysicalMaterial) {
+                            material.clearcoat = 0.48;
+                            material.clearcoatRoughness = 0.24;
+                        }
+                    } else if (vehicleType === 'utv') {
+                        // This GLB uses one unnamed material for its entire
+                        // texture atlas and omits metallicFactor, which GLTF
+                        // defaults to fully metallic. That makes its black
+                        // paint lose nearly all diffuse light in this scene.
+                        material.metalness = 0.08;
+                        material.roughness = 0.68;
+                        if (material.color) material.color.multiplyScalar(1.18);
+                    }
+                    material.needsUpdate = true;
+                }
+            });
+        }
+        window.enhanceVehicleMaterials = enhanceVehicleMaterials;
 
         
         // LOAD ENTRANCE FIREPLACE GLB MODEL
@@ -2766,11 +2836,196 @@
 
 
 
+        function createWeatherSystem(skyUniforms) {
+            const skyDomeMaterial = new THREE.ShaderMaterial({
+                uniforms: {
+                    uTop: { value: new THREE.Color(0x4a91cf) },
+                    uHorizon: { value: new THREE.Color(0xb9d8ed) },
+                    uStormTop: { value: new THREE.Color(0x657d96) },
+                    uStormHorizon: { value: new THREE.Color(0xaab7c4) },
+                    uStorm: { value: 0 }
+                },
+                vertexShader: `varying vec2 vSkyUv;
+void main() {
+    vSkyUv = uv;
+    vec4 clipPosition = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    gl_Position = clipPosition.xyww;
+}`,
+                fragmentShader: `uniform vec3 uTop;
+uniform vec3 uHorizon;
+uniform vec3 uStormTop;
+uniform vec3 uStormHorizon;
+uniform float uStorm;
+varying vec2 vSkyUv;
+void main() {
+    float height = smoothstep(0.02, 0.88, abs(vSkyUv.y - 0.5) * 2.0);
+    vec3 clearSky = mix(uHorizon, uTop, height);
+    vec3 stormSky = mix(uStormHorizon, uStormTop, height);
+    gl_FragColor = vec4(mix(clearSky, stormSky, uStorm), 1.0);
+}`,
+                side: THREE.BackSide,
+                depthWrite: false,
+                fog: false,
+                toneMapped: false
+            });
+            const skyDome = new THREE.Mesh(new THREE.SphereGeometry(1000, 32, 24), skyDomeMaterial);
+            skyDome.name = 'WeatherSkyGradient';
+            skyDome.renderOrder = -2;
+            skyDome.frustumCulled = false;
+            scene.add(skyDome);
+
+            // Canvas-generated soft cloud puffs are more reliable and visible
+            // from both the orbit camera and the low character camera than a
+            // thin transparent shell around the whole scene.
+            const cloudCanvas = document.createElement('canvas');
+            cloudCanvas.width = 512;
+            cloudCanvas.height = 256;
+            const cloudContext = cloudCanvas.getContext('2d');
+            for (let i = 0; i < 34; i++) {
+                const x = 55 + Math.random() * 402;
+                const y = 58 + Math.random() * 142;
+                const rx = 18 + Math.random() * 44;
+                const ry = 12 + Math.random() * 32;
+                cloudContext.save();
+                cloudContext.translate(x, y);
+                cloudContext.scale(rx, ry);
+                const puff = cloudContext.createRadialGradient(0, 0, 0.08, 0, 0, 1);
+                puff.addColorStop(0, 'rgba(255,255,255,0.96)');
+                puff.addColorStop(0.58, 'rgba(255,255,255,0.76)');
+                puff.addColorStop(1, 'rgba(255,255,255,0)');
+                cloudContext.fillStyle = puff;
+                cloudContext.fillRect(-1, -1, 2, 2);
+                cloudContext.restore();
+            }
+            const cloudTexture = new THREE.CanvasTexture(cloudCanvas);
+            cloudTexture.colorSpace = THREE.SRGBColorSpace;
+            const cloudMaterial = new THREE.SpriteMaterial({
+                map: cloudTexture,
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.78,
+                depthWrite: false,
+                fog: false
+            });
+            const cloudField = new THREE.Group();
+            cloudField.name = 'ProceduralWeatherClouds';
+            const cloudSprites = [];
+            for (let i = 0; i < 36; i++) {
+                const material = cloudMaterial.clone();
+                const sprite = new THREE.Sprite(material);
+                sprite.position.set((Math.random() - 0.5) * 1350, 110 + Math.random() * 260, (Math.random() - 0.5) * 1350);
+                sprite.scale.set(100 + Math.random() * 190, 42 + Math.random() * 72, 1);
+                sprite.userData.coverage = Math.random();
+                sprite.userData.wind = 1.5 + Math.random() * 3.5;
+                cloudSprites.push(sprite);
+                cloudField.add(sprite);
+            }
+            scene.add(cloudField);
+
+            const rainCount = 420;
+            const rainPositions = new Float32Array(rainCount * 6);
+            const rainSpeeds = new Float32Array(rainCount);
+            for (let i = 0; i < rainCount; i++) {
+                rainSpeeds[i] = 28 + Math.random() * 24;
+            }
+            const rainGeometry = new THREE.BufferGeometry();
+            rainGeometry.setAttribute('position', new THREE.BufferAttribute(rainPositions, 3));
+            const rainMaterial = new THREE.LineBasicMaterial({ color: 0xb9d9f4, transparent: true, opacity: 0, depthWrite: false });
+            const rain = new THREE.LineSegments(rainGeometry, rainMaterial);
+            rain.frustumCulled = false;
+            scene.add(rain);
+
+            const presets = [
+                { name: 'clear', coverage: 0.12, opacity: 0.62, light: 1.5, ambient: 0.5, hemi: 0.65, rain: 0, tint: 0xffffff },
+                { name: 'partly cloudy', coverage: 0.48, opacity: 0.76, light: 1.32, ambient: 0.46, hemi: 0.60, rain: 0, tint: 0xffffff },
+                { name: 'overcast', coverage: 0.72, opacity: 0.72, light: 0.88, ambient: 0.40, hemi: 0.48, rain: 0, tint: 0xc9d5e2 },
+                { name: 'light rain', coverage: 0.68, opacity: 0.76, light: 0.92, ambient: 0.42, hemi: 0.50, rain: 0.72, tint: 0xbac9da }
+            ];
+            const initial = presets[0];
+            weatherSystem = {
+                presets,
+                current: { ...initial },
+                target: { ...initial },
+                elapsed: 0,
+                nextChange: 50 + Math.random() * 45,
+                clouds: cloudMaterial,
+                skyDome,
+                cloudField,
+                cloudSprites,
+                rain,
+                rainSpeeds,
+                skyUniforms,
+                backgroundClear: new THREE.Color(0x75addb),
+                backgroundStorm: new THREE.Color(0x788da5),
+                fogClear: new THREE.Color(0x438ed0),
+                fogStorm: new THREE.Color(0x8294a6)
+            };
+        }
+
+        function updateWeather(delta) {
+            if (!weatherSystem) return;
+            const weather = weatherSystem;
+            weather.elapsed += delta;
+            if (weather.elapsed >= weather.nextChange) {
+                const choices = weather.presets.filter((preset) => preset.name !== weather.target.name);
+                const next = choices[Math.floor(Math.random() * choices.length)];
+                weather.target = { ...next };
+                weather.elapsed = 0;
+                weather.nextChange = 55 + Math.random() * 75;
+            }
+            const blend = 1 - Math.exp(-delta / 14);
+            for (const key of ['coverage', 'opacity', 'light', 'ambient', 'hemi', 'rain']) {
+                weather.current[key] = THREE.MathUtils.lerp(weather.current[key], weather.target[key], blend);
+            }
+            weather.current.tint = new THREE.Color(weather.current.tint).lerp(new THREE.Color(weather.target.tint), blend);
+            const stormAmount = THREE.MathUtils.smoothstep(weather.current.coverage, 0.35, 0.9);
+            weather.skyDome.position.copy(camera.position);
+            weather.skyDome.material.uniforms.uStorm.value = stormAmount;
+            weather.cloudField.position.set(camera.position.x, camera.position.y, camera.position.z);
+            for (const sprite of weather.cloudSprites) {
+                sprite.visible = sprite.userData.coverage < Math.min(1, weather.current.coverage + 0.28);
+                sprite.material.opacity = weather.current.opacity;
+                sprite.material.color.copy(weather.current.tint);
+                sprite.position.x += sprite.userData.wind * delta;
+                if (sprite.position.x > 760) sprite.position.x = -760;
+            }
+            weather.rain.material.opacity = weather.current.rain * 0.58;
+
+            if (dirLight) dirLight.intensity = weather.current.light;
+            if (ambientLight) ambientLight.intensity = weather.current.ambient;
+            if (hemiLight) hemiLight.intensity = weather.current.hemi;
+            if (scene.fog) {
+                scene.fog.color.copy(weather.fogClear).lerp(weather.fogStorm, stormAmount);
+                scene.fog.density = THREE.MathUtils.lerp(0.00055, 0.0018, stormAmount);
+                scene.background.copy(weather.backgroundClear).lerp(weather.backgroundStorm, stormAmount);
+            }
+            weather.skyUniforms['turbidity'].value = THREE.MathUtils.lerp(1.8, 4.5, weather.current.coverage);
+            weather.skyUniforms['mieCoefficient'].value = THREE.MathUtils.lerp(0.001, 0.003, weather.current.coverage);
+
+            const cameraPosition = camera.position;
+            weather.rain.position.set(cameraPosition.x, cameraPosition.y, cameraPosition.z);
+            const positions = weather.rain.geometry.attributes.position.array;
+            for (let i = 0; i < weather.rainSpeeds.length; i++) {
+                const index = i * 6;
+                if (positions[index + 1] < cameraPosition.y - 16 || positions[index + 3] === 0) {
+                    const x = (Math.random() - 0.5) * 60;
+                    const z = (Math.random() - 0.5) * 60;
+                    const y = 12 + Math.random() * 30;
+                    positions[index] = x; positions[index + 1] = y; positions[index + 2] = z;
+                    positions[index + 3] = x + 0.16; positions[index + 4] = y - 0.9; positions[index + 5] = z;
+                } else {
+                    const fall = weather.rainSpeeds[i] * delta;
+                    positions[index + 1] -= fall; positions[index + 4] -= fall;
+                }
+            }
+            weather.rain.geometry.attributes.position.needsUpdate = true;
+        }
+
         function init() {
             // Scene
             scene = new THREE.Scene();
-            scene.background = new THREE.Color(0x87ceeb);
-            scene.fog = new THREE.FogExp2(0x1e5a96, 0.0025);
+            scene.background = new THREE.Color(0x75addb);
+            scene.fog = new THREE.FogExp2(0x438ed0, 0.00055);
             // Camera
             camera = new THREE.PerspectiveCamera(
                 60,
@@ -2783,7 +3038,7 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.outputEncoding = THREE.sRGBEncoding;
             renderer.toneMapping = THREE.ACESFilmicToneMapping;
-            renderer.toneMappingExposure = 1.2;
+            renderer.toneMappingExposure = 1.0;
             renderer.shadowMap.enabled = true;
             renderer.shadowMap.type = THREE.PCFSoftShadowMap;
             document.body.appendChild(renderer.domElement);
@@ -2791,7 +3046,7 @@
             controls = new OrbitControls(camera, renderer.domElement);
             controls.enableDamping = true;
             // Lights
-            const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
+            dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
             dirLight.position.set(500, 800, 500);
             dirLight.castShadow = true;
             // 2048 is sufficient for this scene's broad shadow camera and
@@ -2799,11 +3054,14 @@
             dirLight.shadow.mapSize.width = 2048;
             dirLight.shadow.mapSize.height = 2048;
             dirLight.shadow.camera.near = 0.1;
-            dirLight.shadow.camera.far = 3000;
-            dirLight.shadow.camera.left = -1000;
-            dirLight.shadow.camera.right = 1000;
-            dirLight.shadow.camera.top = 1000;
-            dirLight.shadow.camera.bottom = -1000;
+            // Keep the shadow map focused near the player for sharper terrain
+            // and prop shadows. The old 2000-unit-wide frustum spread 2048
+            // texels too thinly across the whole map.
+            dirLight.shadow.camera.far = 1200;
+            dirLight.shadow.camera.left = -180;
+            dirLight.shadow.camera.right = 180;
+            dirLight.shadow.camera.top = 180;
+            dirLight.shadow.camera.bottom = -180;
             dirLight.shadow.bias = 0;
             dirLight.shadow.normalBias = 0.02;
             dirLight.target.position.set(0, 0, 0);
@@ -2813,8 +3071,9 @@
             // Debug: Add shadow camera helper to visualize shadow frustum
             const shadowCameraHelper = new THREE.CameraHelper(dirLight.shadow.camera);
             //scene.add(shadowCameraHelper);
-            scene.add(new THREE.AmbientLight(0xffffff, 0.5));
-            const hemiLight = new THREE.HemisphereLight(0xddeeff, 0x444455, 0.45);
+            ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+            scene.add(ambientLight);
+            hemiLight = new THREE.HemisphereLight(0xc8e7ff, 0x596447, 0.65);
             hemiLight.position.set(0, 200, 0);
             scene.add(hemiLight);
             // Sky
@@ -2825,9 +3084,9 @@
             sun = new THREE.Vector3();
             // Set sky atmosphere parameters for a gorgeous, crisp day
             const effectController = {
-                turbidity: 8, // Higher turbidity for more atmospheric effect
-                rayleigh: 2, // Rayleigh scattering for blue sky
-                mieCoefficient: 0.005, // Mie scattering for haze
+                turbidity: 1.8,
+                rayleigh: 2.6,
+                mieCoefficient: 0.001,
                 mieDirectionalG: 0.8, // Mie directional scattering
                 elevation: 35, // Golden hour / afternoon angle
                 azimuth: 180,  // Sun position direction
@@ -2842,6 +3101,7 @@
             const theta = THREE.MathUtils.degToRad(effectController.azimuth);
             sun.setFromSphericalCoords(1, phi, theta);
             uniforms['sunPosition'].value.copy(sun);
+            createWeatherSystem(uniforms);
             // Make the main directional light follow the sun exactly
             dirLight.position.copy(sun).multiplyScalar(1000);
             // Create a PMREM environment from the sky so PBR materials have reflections
@@ -2854,6 +3114,10 @@
             } catch (e) {
                 console.warn('PMREM environment generation failed', e);
             }
+            // The analytic Sky shader is useful for reflections, but rendered
+            // almost white from the game cameras. Use the explicit blue scene
+            // background for the view and keep the weather clouds over it.
+            sky.visible = false;
             // ==========================================
             // 2. REALISTIC WATER IMPLEMENTATION
             // ==========================================
@@ -3844,13 +4108,56 @@
                 fenceGroup.name = 'MaskFence';
                 const textureLoaderForFence = new THREE.TextureLoader();
                 textureLoaderForFence.load('FenceTexture.png', (plankTexture) => {
-                    plankTexture.colorSpace = THREE.SRGBColorSpace;
+                    const woodCanvas = document.createElement('canvas');
+                    woodCanvas.width = 512;
+                    woodCanvas.height = 512;
+                    const woodContext = woodCanvas.getContext('2d');
+                    woodContext.drawImage(plankTexture.image, 0, 0, 512, 512);
+                    woodContext.globalCompositeOperation = 'multiply';
+                    woodContext.fillStyle = '#f0ede3';
+                    woodContext.fillRect(0, 0, 512, 512);
+                    woodContext.globalCompositeOperation = 'source-over';
+                    for (let grain = 0; grain < 95; grain++) {
+                        const x = Math.random() * 512;
+                        const offset = (Math.random() - 0.5) * 4;
+                        woodContext.strokeStyle = Math.random() < 0.5
+                            ? 'rgba(105,83,58,0.055)'
+                            : 'rgba(255,255,245,0.10)';
+                        woodContext.lineWidth = 0.4 + Math.random() * 1.1;
+                        woodContext.beginPath();
+                        woodContext.moveTo(x, 0);
+                        woodContext.bezierCurveTo(x + offset, 150, x - offset, 340, x + offset * 0.4, 512);
+                        woodContext.stroke();
+                    }
+                    const weathering = woodContext.createLinearGradient(0, 300, 0, 512);
+                    weathering.addColorStop(0, 'rgba(126,103,73,0)');
+                    weathering.addColorStop(1, 'rgba(126,103,73,0.12)');
+                    woodContext.fillStyle = weathering;
+                    woodContext.fillRect(0, 300, 512, 212);
+
+                    const woodTexture = new THREE.CanvasTexture(woodCanvas);
+                    woodTexture.colorSpace = THREE.SRGBColorSpace;
+                    woodTexture.wrapS = THREE.RepeatWrapping;
+                    woodTexture.wrapT = THREE.RepeatWrapping;
+                    plankTexture.colorSpace = THREE.NoColorSpace;
                     plankTexture.wrapS = THREE.RepeatWrapping;
                     plankTexture.wrapT = THREE.RepeatWrapping;
-                    // The fence is decorative and does not cast shadows, so use
-                    // unlit materials to keep the many visible pickets inexpensive.
-                    const material = new THREE.MeshBasicMaterial({ color: 0xffffff, map: plankTexture });
-                    const postMaterial = new THREE.MeshBasicMaterial({ color: 0xf4f4f0 });
+                    const material = new THREE.MeshStandardMaterial({
+                        color: 0xffffff,
+                        map: woodTexture,
+                        bumpMap: plankTexture,
+                        bumpScale: 0.035,
+                        roughness: 0.88,
+                        metalness: 0.0
+                    });
+                    const postMaterial = new THREE.MeshStandardMaterial({
+                        color: 0xe8e3d7,
+                        map: woodTexture,
+                        bumpMap: plankTexture,
+                        bumpScale: 0.035,
+                        roughness: 0.9,
+                        metalness: 0.0
+                    });
                     const plankWidth = 0.18, fenceHeight = 2.1, panelSpacing = 0.2;
                     const plankGeometry = new THREE.BoxGeometry(plankWidth, fenceHeight, 0.055);
                     const postGeometry = new THREE.BoxGeometry(0.14, fenceHeight + 0.12, 0.14);
@@ -3952,7 +4259,7 @@
                             // Keep fence rendering cheap; sections outside the
                             // camera frustum are now culled independently.
                             instances.castShadow = false;
-                            instances.receiveShadow = false;
+                            instances.receiveShadow = true;
                             instances.userData.noCollision = true;
                             const chunkGroup = new THREE.Group();
                             chunkGroup.position.set(chunk.originX, 0, chunk.originZ);
@@ -4032,6 +4339,45 @@
                         roughness: 1.0,
                         metalness: 0.0
                     });
+                    // Add subtle, world-aligned variation at several scales.
+                    // This breaks up the flat vertex-color fields without
+                    // introducing visible seams or requiring another asset.
+                    material.onBeforeCompile = (shader) => {
+                        shader.vertexShader = shader.vertexShader.replace(
+                            '#include <common>',
+                            '#include <common>\nvarying vec3 vTerrainWorldPosition;'
+                        );
+                        shader.vertexShader = shader.vertexShader.replace(
+                            '#include <worldpos_vertex>',
+                            '#include <worldpos_vertex>\nvTerrainWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;'
+                        );
+                        shader.fragmentShader = shader.fragmentShader.replace(
+                            '#include <common>',
+                            `#include <common>
+varying vec3 vTerrainWorldPosition;
+float terrainHash(vec2 p) {
+    p = fract(p * vec2(123.34, 456.21));
+    p += dot(p, p + 45.32);
+    return fract(p.x * p.y);
+}
+float terrainNoise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    return mix(mix(terrainHash(i), terrainHash(i + vec2(1.0, 0.0)), f.x),
+               mix(terrainHash(i + vec2(0.0, 1.0)), terrainHash(i + vec2(1.0, 1.0)), f.x), f.y);
+}`
+                        );
+                        shader.fragmentShader = shader.fragmentShader.replace(
+                            '#include <color_fragment>',
+                            `#include <color_fragment>
+float terrainDetail = terrainNoise(vTerrainWorldPosition.xz * 0.12) * 0.55
+                    + terrainNoise(vTerrainWorldPosition.xz * 0.035) * 0.30
+                    + terrainNoise(vTerrainWorldPosition.xz * 0.008) * 0.15;
+diffuseColor.rgb *= 0.88 + terrainDetail * 0.24;`
+                        );
+                    };
+                    material.customProgramCacheKey = () => 'terrain-world-noise-v1';
                     terrainMesh = new THREE.Mesh(geometry, material);
                     terrainMesh.rotation.x = -Math.PI / 2;
                     terrainMesh.position.y = OFFSET;
@@ -4144,6 +4490,7 @@
                 zipLineManager.initZipline(scene);
             }
             const delta = clock.getDelta();
+            updateWeather(delta);
 
             // Update gamepad input
             if (typeof inputManager !== 'undefined' && inputManager.updateGamepad) {

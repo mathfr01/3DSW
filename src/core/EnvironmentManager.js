@@ -116,6 +116,61 @@ function getRandomTreeGreen() {
     return color;
 }
 
+function createTreeFoliageTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#f3f3f3';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Low contrast clusters keep the green palette visible while breaking up
+    // the smooth, plastic look of the low-poly canopy.
+    for (let i = 0; i < 900; i++) {
+        const x = Math.random() * canvas.width;
+        const y = Math.random() * canvas.height;
+        const radius = 1 + Math.random() * 4;
+        const shade = 218 + Math.floor(Math.random() * 37);
+        context.fillStyle = `rgba(${shade}, ${shade}, ${shade}, ${0.12 + Math.random() * 0.24})`;
+        context.beginPath();
+        context.ellipse(x, y, radius * 1.5, radius * 0.7, Math.random() * Math.PI, 0, Math.PI * 2);
+        context.fill();
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(1.4, 1.4);
+    return texture;
+}
+
+function createTreeBarkTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 256;
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#795638';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+
+    for (let i = 0; i < 90; i++) {
+        const x = Math.random() * canvas.width;
+        const shade = Math.random() > 0.5 ? 'rgba(220, 185, 135, 0.16)' : 'rgba(38, 25, 16, 0.2)';
+        context.strokeStyle = shade;
+        context.lineWidth = 1 + Math.random() * 3;
+        context.beginPath();
+        context.moveTo(x, 0);
+        context.bezierCurveTo(x - 5 + Math.random() * 10, 80, x - 5 + Math.random() * 10, 170, x - 4 + Math.random() * 8, canvas.height);
+        context.stroke();
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    return texture;
+}
+
 function cloneTreeModelWithTint(treeModel, foliageMaterial) {
     const tree = treeModel.clone(true);
     tree.traverse((child) => {
@@ -170,19 +225,18 @@ export class EnvironmentManager {
         }
         pos.needsUpdate = true;
 
-        const roadMaterial = new THREE.MeshBasicMaterial({
-            color: 0x000000, // Black roads
-            map: this.terrainManager.roadTexture,
-            transparent: true,
-            alphaTest: 0.8,
-            side: THREE.DoubleSide
-        });
+        // Roads stay hidden until their alpha mask arrives. TerrainManager
+        // then applies the tiled asphalt material without changing the shape.
+        const roadMaterial = new THREE.MeshBasicMaterial({ visible: false });
 
         const roadMesh = new THREE.Mesh(roadGeometry, roadMaterial);
         roadMesh.rotation.x = Math.PI / 2; // Flip vertically
 
         window.roadMesh = roadMesh;
         this.scene.add(roadMesh);
+        if (this.terrainManager.roadTexture) {
+            this.terrainManager.applyRoadTexture(roadMesh);
+        }
         console.log('✅ Road overlay mesh added to scene');
     }
 
@@ -407,8 +461,13 @@ export class EnvironmentManager {
         this.foliageGeometries = foliageGeometries;
         this.foliageLocalMatrices = foliageLocalMatrices;
 
-        const trunkMaterial = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
-        const foliageMaterials = Array.from({ length: 5 }, () => new THREE.MeshLambertMaterial({ color: getRandomTreeGreen() }));
+        const barkTexture = createTreeBarkTexture();
+        const foliageTexture = createTreeFoliageTexture();
+        const trunkMaterial = new THREE.MeshLambertMaterial({ color: 0xffffff, map: barkTexture });
+        const foliageMaterials = Array.from({ length: 5 }, () => new THREE.MeshLambertMaterial({
+            color: getRandomTreeGreen(),
+            map: foliageTexture
+        }));
         this.foliageMaterials = foliageMaterials;
 
         const trunkMeshNear = new THREE.InstancedMesh(trunkGeometry, trunkMaterial, maxTrees);
