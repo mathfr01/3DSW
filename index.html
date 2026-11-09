@@ -4374,7 +4374,12 @@ float terrainNoise(vec2 p) {
 float terrainDetail = terrainNoise(vTerrainWorldPosition.xz * 0.12) * 0.55
                     + terrainNoise(vTerrainWorldPosition.xz * 0.035) * 0.30
                     + terrainNoise(vTerrainWorldPosition.xz * 0.008) * 0.15;
-diffuseColor.rgb *= 0.88 + terrainDetail * 0.24;`
+diffuseColor.rgb *= 0.94 + terrainDetail * 0.12;
+float grassFine = terrainNoise(vTerrainWorldPosition.xz * 0.75) * 0.55
+                + terrainNoise(vTerrainWorldPosition.xz * 1.8) * 0.30
+                + terrainNoise(vTerrainWorldPosition.xz * 4.2) * 0.15;
+float grassMask = smoothstep(0.02, 0.16, diffuseColor.g - diffuseColor.r);
+diffuseColor.rgb *= 1.0 + (grassFine - 0.5) * 0.16 * grassMask;`
                         );
                     };
                     material.customProgramCacheKey = () => 'terrain-world-noise-v1';
@@ -4382,7 +4387,9 @@ diffuseColor.rgb *= 0.88 + terrainDetail * 0.24;`
                     terrainMesh.rotation.x = -Math.PI / 2;
                     terrainMesh.position.y = OFFSET;
                     terrainMesh.receiveShadow = true;
-                    terrainMesh.castShadow = true;
+                    // The large, displaced terrain self-shadows in repeated
+                    // bands; trees and props still cast onto it as a receiver.
+                    terrainMesh.castShadow = false;
                     terrainMesh.scale.y = -1;
                     terrainMesh.material.side = THREE.DoubleSide;
                     scene.add(terrainMesh);

@@ -231,6 +231,10 @@ export class EnvironmentManager {
 
         const roadMesh = new THREE.Mesh(roadGeometry, roadMaterial);
         roadMesh.rotation.x = Math.PI / 2; // Flip vertically
+        // This surface closely follows the terrain; casting its own shadow
+        // creates shadow-map striping across the asphalt.
+        roadMesh.castShadow = false;
+        roadMesh.receiveShadow = true;
 
         window.roadMesh = roadMesh;
         this.scene.add(roadMesh);
