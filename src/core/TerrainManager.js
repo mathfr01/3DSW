@@ -5,6 +5,7 @@ class TerrainManager {
         this.DISPLACEMENT = 37.5;
         this.OFFSET = -20;
         this.WATER_LEVEL = -0.1;
+        this.CONCRETE_SLAB_HEIGHT = 0.0762; // 3 inches in the terrain's meter-like world units
 
         // Data arrays loaded from masks/maps
         this.heightData = null;
@@ -13,6 +14,7 @@ class TerrainManager {
         this.beachData = null;
         this.buildingsData = null;
         this.treesData = null;
+        this.concreteData = null;
 
         // Canvas and context variables for texture decoding
         this.canvas = document.createElement('canvas');
@@ -21,6 +23,7 @@ class TerrainManager {
         this.beachCanvas = document.createElement('canvas');
         this.buildingsCanvas = document.createElement('canvas');
         this.treesCanvas = document.createElement('canvas');
+        this.concreteCanvas = document.createElement('canvas');
 
         // References to generated Three.js textures
         this.roadTexture = null;
@@ -241,6 +244,24 @@ class TerrainManager {
         console.log(`Trees mask loaded: ${img.width}x${img.height}, total pixels: ${this.treesData.length / 4}`);
     }
 
+    setupConcrete(texture) {
+        const img = texture.image;
+        if (!img || img.width === 0) {
+            img.onload = () => this.setupConcrete(texture);
+            return;
+        }
+
+        this.concreteCanvas.width = img.width;
+        this.concreteCanvas.height = img.height;
+        const ctx = this.concreteCanvas.getContext('2d', { willReadFrequently: true });
+        ctx.clearRect(0, 0, img.width, img.height);
+        ctx.drawImage(img, 0, 0);
+        // Keep the mask alpha unchanged: its strokes are the slab footprints.
+        // The visible rise and edge faces add thickness without widening them.
+        this.concreteData = ctx.getImageData(0, 0, img.width, img.height).data;
+        console.log(`Concrete mask loaded: ${img.width}x${img.height}`);
+    }
+
     getRawTerrainValue(worldPos) {
         if (!this.heightData) {
             return 0.3;
@@ -282,7 +303,7 @@ class TerrainManager {
         return (h * this.DISPLACEMENT) + this.OFFSET;
     }
 
-    getGroundHeightAt(worldPos) {
+    getGroundHeightAt(worldPos, includeConcrete = true) {
         let height = this.getTerrainHeightAt(worldPos);
 
         const terrainSize = 1000;
@@ -312,6 +333,15 @@ class TerrainManager {
                 const a = this.beachData[idx + 3];
                 if (a > 50) {
                     isOnOverlay = true;
+                }
+            }
+
+            if (includeConcrete && this.concreteData && this.concreteCanvas.width > 0) {
+                const x = Math.floor(u * (this.concreteCanvas.width - 1));
+                const y = Math.floor(v * (this.concreteCanvas.height - 1));
+                const idx = (y * this.concreteCanvas.width + x) * 4;
+                if (this.concreteData[idx + 3] > 160) {
+                    return height + (isOnOverlay ? 0.1 : 0) + this.CONCRETE_SLAB_HEIGHT;
                 }
             }
 

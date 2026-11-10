@@ -1589,6 +1589,7 @@
         const beachPath = 'SW_Beach.png'; // Path to beach PNG (beach areas)
         const treesPath = 'SW_Trees.png'; // Path to trees PNG (black = tree locations)
         const fencePath = 'SW_Fence.png'; // White strokes mark fence centerlines
+        const concretePath = 'SW_Concrete.png'; // Alpha marks concrete slab coverage
         // Terrain displacement constants must be declared before any async texture callbacks that may run immediately
         const DISPLACEMENT = 37.5; // Max height of terrain in world units (adjust based on actual height map range)
         const OFFSET = -20;
@@ -3151,6 +3152,8 @@ void main() {
             textureLoader.load(beachPath, (t) => terrainManager.setupBeach(t));
             // Load trees overlay
             textureLoader.load(treesPath, (t) => terrainManager.setupTrees(t));
+            // Load concrete slab coverage mask
+            textureLoader.load(concretePath, (t) => terrainManager.setupConcrete(t));
             // Add keyboard shortcut to drive vehicle (press 'E')
             window.addEventListener('keydown', async (event) => {
                 if (event.code === 'KeyE') {
@@ -4020,6 +4023,7 @@ void main() {
             loadWater_Games();
             loadToiletCabinLeftBeach();
             loadFenceFromMask();
+            loadLampPostsFromMask();
             loadBuildingDockSplat();
             jetSkiManager.loadVehicle(scene);
 
@@ -4038,6 +4042,130 @@ void main() {
                     }
                 })();
             }
+        }
+
+        // Place one LampPost.glb at each white marker in SW_LampPostsLocations.png.
+        // Each instance faces the nearest road pixel so both street edges and
+        // the roundabout naturally point inward toward the pavement.
+        function loadLampPostsFromMask() {
+            textureLoader.load('SW_LampPostsLocations.png', (locationTexture) => {
+                const image = locationTexture.image;
+                if (!image || !image.width || !terrainManager.heightData) return;
+
+                const readPixels = (source) => {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = source.width;
+                    canvas.height = source.height;
+                    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+                    ctx.drawImage(source, 0, 0);
+                    return { width: source.width, height: source.height, data: ctx.getImageData(0, 0, source.width, source.height).data };
+                };
+                const locations = readPixels(image);
+
+                const placeWithRoadMask = (roadMask) => {
+                    const { width, height, data } = locations;
+                    const visited = new Uint8Array(width * height);
+                    const dots = [];
+                    const isMarker = (x, y) => {
+                        if (x < 0 || y < 0 || x >= width || y >= height) return false;
+                        const i = (y * width + x) * 4;
+                        return data[i + 3] > 32 && data[i] > 170 && data[i + 1] > 170 && data[i + 2] > 170;
+                    };
+                    // Connected components collapse each small white dot to one center.
+                    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+                        const start = y * width + x;
+                        if (visited[start] || !isMarker(x, y)) continue;
+                        const queue = [[x, y]];
+                        visited[start] = 1;
+                        let sx = 0, sy = 0, count = 0;
+                        for (let q = 0; q < queue.length; q++) {
+                            const [cx, cy] = queue[q];
+                            sx += cx; sy += cy; count++;
+                            for (const [nx, ny] of [[cx + 1, cy], [cx - 1, cy], [cx, cy + 1], [cx, cy - 1]]) {
+                                if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+                                const ni = ny * width + nx;
+                                if (!visited[ni] && isMarker(nx, ny)) { visited[ni] = 1; queue.push([nx, ny]); }
+                            }
+                        }
+                        if (count >= 2) dots.push({ x: sx / count, y: sy / count });
+                    }
+                    if (!dots.length) {
+                        console.warn('[lamp-posts] No white location markers found');
+                        return;
+                    }
+
+                    const postWorld = (dot) => ({
+                        x: dot.x / (width - 1) * 1000 - 500,
+                        z: dot.y / (height - 1) * 1000 - 500
+                    });
+                    const nearestRoadDirection = (point) => {
+                        if (!roadMask) return 0;
+                        const rw = roadMask.width, rh = roadMask.height, pixels = roadMask.data;
+                        const px = Math.round((point.x + 500) / 1000 * (rw - 1));
+                        const py = Math.round((point.z + 500) / 1000 * (rh - 1));
+                        let best = Infinity, dxBest = 0, dzBest = 0;
+                        // Search locally (about 30 world units) for a dark road pixel.
+                        const radius = Math.ceil(Math.min(rw, rh) * 0.03);
+                        for (let oy = -radius; oy <= radius; oy++) for (let ox = -radius; ox <= radius; ox++) {
+                            const x = px + ox, y = py + oy;
+                            if (x < 0 || y < 0 || x >= rw || y >= rh) continue;
+                            const i = (y * rw + x) * 4;
+                            if (pixels[i + 3] <= 50 || (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3 >= 180) continue;
+                            const d2 = ox * ox + oy * oy;
+                            if (d2 > 0 && d2 < best) { best = d2; dxBest = ox; dzBest = oy; }
+                        }
+                        // THREE's common GLB forward axis is +Z; yaw turns +Z toward the road.
+                        return best < Infinity ? Math.atan2(dxBest, dzBest) : 0;
+                    };
+
+                    new GLTFLoader().load('3DModels/LampPost.glb', (gltf) => {
+                        const prototype = gltf.scene;
+                        const lampScale = 6;
+                        const prototypeBounds = new THREE.Box3().setFromObject(prototype);
+                        const scaledBaseOffset = prototypeBounds.min.y * lampScale;
+                        prototype.updateMatrixWorld(true);
+                        const inversePrototypeMatrix = prototype.matrixWorld.clone().invert();
+                        const group = new THREE.Group();
+                        group.name = 'LampPosts';
+                        const instancePosition = new THREE.Vector3();
+                        const instanceRotation = new THREE.Quaternion();
+                        const instanceScale = new THREE.Vector3(lampScale, lampScale, lampScale);
+                        const instanceMatrix = new THREE.Matrix4();
+                        const lampTransforms = dots.map((dot) => {
+                            const point = postWorld(dot);
+                            instancePosition.set(point.x, getGroundHeightAt(point) + 0.05 - scaledBaseOffset, point.z);
+                            instanceRotation.setFromAxisAngle(new THREE.Vector3(0, 1, 0), nearestRoadDirection(point));
+                            instanceMatrix.compose(instancePosition, instanceRotation, instanceScale);
+                            return instanceMatrix.clone();
+                        });
+                        prototype.traverse((child) => {
+                            if (!child.isMesh || !child.geometry || !child.material) return;
+                            const localMeshMatrix = inversePrototypeMatrix.clone().multiply(child.matrixWorld);
+                            const batch = new THREE.InstancedMesh(child.geometry, child.material, dots.length);
+                            batch.name = `LampPost_${child.name || 'Mesh'}`;
+                            batch.castShadow = false;
+                            batch.receiveShadow = false;
+                            for (let i = 0; i < lampTransforms.length; i++) {
+                                batch.setMatrixAt(i, lampTransforms[i].clone().multiply(localMeshMatrix));
+                            }
+                            batch.instanceMatrix.needsUpdate = true;
+                            batch.computeBoundingSphere();
+                            group.add(batch);
+                        });
+                        scene.add(group);
+                        console.log(`[lamp-posts] Instanced ${dots.length} posts from SW_LampPostsLocations.png`);
+                    }, undefined, (error) => console.error('[lamp-posts] Failed to load LampPost.glb:', error));
+                };
+
+                const useRoads = () => {
+                    if (terrainManager.roadsData && terrainManager.roadsCanvas.width) {
+                        placeWithRoadMask({ width: terrainManager.roadsCanvas.width, height: terrainManager.roadsCanvas.height, data: terrainManager.roadsData });
+                    } else {
+                        textureLoader.load(roadsPath, (roadsTexture) => placeWithRoadMask(readPixels(roadsTexture.image)));
+                    }
+                };
+                useRoads();
+            }, undefined, (error) => console.error('[lamp-posts] Failed to load location mask:', error));
         }
 
         // Trace the white centerlines in SW_Fence.png and build a modest white
@@ -4397,6 +4525,7 @@ diffuseColor.rgb *= 1.0 + (grassFine - 0.5) * 0.16 * grassMask;`
                     isTerrainLoaded = true;
                     environmentManager.createRoadOverlay();
                     environmentManager.createBeachOverlay();
+                    environmentManager.createConcreteOverlay();
                     environmentManager.createBuildingOverlay(refreshCollisionObjects);
                     environmentManager.createTreeOverlay(refreshCollisionObjects);
                     initializeGameMode();
