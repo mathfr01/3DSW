@@ -992,8 +992,8 @@
                 const offsetX = (Math.random() - 0.5) * 50; // Variation de ±25 unités
                 const offsetZ = (Math.random() - 0.5) * 50;
                 const startPos = {
-                    x: 190,
-                    z: -90
+                    x: 144,
+                    z: -81
                 };
                 // Obtenir la hauteur du terrain à cette position
                 const terrainY = getTerrainHeightAt({ x: startPos.x, z: startPos.z });
@@ -1585,6 +1585,7 @@
         const heightMapPath = 'SWLakeHeightMap.png'; // Path to your height map PNG file
         const lakeBoundaryPath = 'SWLakeBoundary.png'; // Path to lake boundary PNG (white=water, black=land)
         const roadsPath = 'SW_Roads.png'; // Path to roads PNG (black roads)
+        const parkingLinesPath = 'SW_ParkingLines.png'; // White parking paint on black background
         const buildingsPath = 'SW_Buildings.png'; // Path to buildings PNG (black buildings)
         const beachPath = 'SW_Beach.png'; // Path to beach PNG (beach areas)
         const treesPath = 'SW_Trees.png'; // Path to trees PNG (black = tree locations)
@@ -3146,6 +3147,8 @@ void main() {
             loadTerrain();
             // Load roads overlay
             textureLoader.load(roadsPath, (t) => terrainManager.setupRoads(t));
+            // Load parking paint overlay
+            textureLoader.load(parkingLinesPath, (t) => terrainManager.setupParkingLines(t));
             // Load buildings overlay
             textureLoader.load(buildingsPath, (t) => terrainManager.setupBuildings(t));
             // Load beach overlay

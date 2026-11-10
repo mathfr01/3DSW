@@ -59,7 +59,7 @@ export class VehicleManager {
         this.firstPersonOffset = new THREE.Vector3(0.23, 1.55, -0.15); // Driver's seat offset (Left seat maps to +X)
         
         // Spawn location close to the capsule player spawn (210, -100)
-        this.spawnPos = new THREE.Vector3(187, 0, -82);
+        this.spawnPos = new THREE.Vector3(137, 0, -77);
         this.proximityDistance = 3.5;       // Trigger radius to show the enter prompt
         this.promptElement = null;          // HTML HUD banner reference
     }
@@ -183,7 +183,7 @@ export class VehicleManager {
             this.vehicle.position.set(this.spawnPos.x, height, this.spawnPos.z);
             
             // Initial rotation matching target heading direction
-            this.vehicle.rotation.y = this.heading - (20 * Math.PI / 180);
+            this.vehicle.rotation.y = this.heading - (-65 * Math.PI / 180);
 
             // Preserve the GLB's authored surface response, but keep its
             // geometry participating in the scene's real-time shadows.

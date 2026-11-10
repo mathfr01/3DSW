@@ -241,6 +241,9 @@ export class EnvironmentManager {
         if (this.terrainManager.roadTexture) {
             this.terrainManager.applyRoadTexture(roadMesh);
         }
+        if (this.terrainManager.parkingLinesTexture) {
+            this.terrainManager.applyParkingLinesTexture(roadMesh);
+        }
         console.log('✅ Road overlay mesh added to scene');
     }
 
@@ -293,16 +296,23 @@ export class EnvironmentManager {
             return;
         }
 
-        if (window.concreteOverlay) this.scene.remove(window.concreteOverlay);
+        if (window.concreteOverlay) {
+            this.scene.remove(window.concreteOverlay);
+            window.concreteOverlay.traverse((object) => {
+                if (object.geometry) object.geometry.dispose();
+                if (object.material) {
+                    if (Array.isArray(object.material)) object.material.forEach((material) => material.dispose());
+                    else object.material.dispose();
+                }
+            });
+        }
 
-        // Crop the overlay to the marked area so it does not add a full-map
-        // transparent surface and unnecessary overdraw.
         const sourceWidth = terrain.concreteCanvas.width;
         const sourceHeight = terrain.concreteCanvas.height;
         let minX = sourceWidth, minY = sourceHeight, maxX = -1, maxY = -1;
         for (let y = 0; y < sourceHeight; y++) for (let x = 0; x < sourceWidth; x++) {
             const alpha = terrain.concreteData[(y * sourceWidth + x) * 4 + 3];
-            if (alpha > 16) {
+            if (alpha > 160) {
                 minX = Math.min(minX, x); minY = Math.min(minY, y);
                 maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
             }
@@ -311,166 +321,145 @@ export class EnvironmentManager {
             console.warn('[concrete] Mask contains no visible slab area');
             return;
         }
-        const padding = 2;
-        minX = Math.max(0, minX - padding); minY = Math.max(0, minY - padding);
-        maxX = Math.min(sourceWidth - 1, maxX + padding); maxY = Math.min(sourceHeight - 1, maxY + padding);
-        const cropWidth = maxX - minX + 1;
-        const cropHeight = maxY - minY + 1;
-
-        // The source PNG alpha stores the concrete coverage footprint.
-        const maskCanvas = document.createElement('canvas');
-        maskCanvas.width = cropWidth;
-        maskCanvas.height = cropHeight;
-        const maskContext = maskCanvas.getContext('2d');
-        const maskImage = maskContext.createImageData(cropWidth, cropHeight);
-        for (let y = 0; y < cropHeight; y++) for (let x = 0; x < cropWidth; x++) {
-            const sourceIndex = ((y + minY) * sourceWidth + x + minX) * 4;
-            const targetIndex = (y * cropWidth + x) * 4;
-            maskImage.data[targetIndex] = 255;
-            maskImage.data[targetIndex + 1] = terrain.concreteData[sourceIndex + 3];
-            maskImage.data[targetIndex + 2] = 255;
-            maskImage.data[targetIndex + 3] = 255;
-        }
-        maskContext.putImageData(maskImage, 0, 0);
-        const alphaMap = new THREE.CanvasTexture(maskCanvas);
-        alphaMap.flipY = false;
-        alphaMap.needsUpdate = true;
-
-        // Low contrast grain and aggregate create a realistic light gray finish.
-        const textureCanvas = document.createElement('canvas');
-        textureCanvas.width = 256;
-        textureCanvas.height = 256;
-        const textureContext = textureCanvas.getContext('2d');
-        const texturePixels = textureContext.createImageData(256, 256);
-        for (let i = 0; i < texturePixels.data.length; i += 4) {
-            const grain = (Math.random() - 0.5) * 32;
-            const value = Math.max(160, Math.min(220, 190 + grain));
-            texturePixels.data[i] = value;
-            texturePixels.data[i + 1] = value;
-            texturePixels.data[i + 2] = Math.min(225, value + 1);
-            texturePixels.data[i + 3] = 255;
-        }
-        textureContext.putImageData(texturePixels, 0, 0);
-        for (let i = 0; i < 100; i++) {
-            const shade = Math.random() < 0.5 ? 150 : 224;
-            textureContext.fillStyle = `rgba(${shade},${shade},${shade},${0.025 + Math.random() * 0.035})`;
-            textureContext.beginPath();
-            textureContext.ellipse(Math.random() * 256, Math.random() * 256, 3 + Math.random() * 10, 2 + Math.random() * 7, Math.random() * Math.PI, 0, Math.PI * 2);
-            textureContext.fill();
-        }
-        for (let i = 0; i < 1200; i++) {
-            const shade = Math.random() < 0.5 ? 135 : 238;
-            textureContext.fillStyle = `rgba(${shade},${shade},${shade},${0.1 + Math.random() * 0.2})`;
-            textureContext.beginPath();
-            textureContext.arc(Math.random() * 256, Math.random() * 256, 0.35 + Math.random() * 1.5, 0, Math.PI * 2);
-            textureContext.fill();
-        }
-        const concreteTexture = new THREE.CanvasTexture(textureCanvas);
-        concreteTexture.colorSpace = THREE.SRGBColorSpace;
-        concreteTexture.wrapS = THREE.RepeatWrapping;
-        concreteTexture.wrapT = THREE.RepeatWrapping;
-        concreteTexture.repeat.set(18, 18);
-        concreteTexture.anisotropy = 4;
-
-        const worldPerPixelX = 1000 / (sourceWidth - 1);
-        const worldPerPixelZ = 1000 / (sourceHeight - 1);
-        const slabWidth = cropWidth * worldPerPixelX;
-        const slabDepth = cropHeight * worldPerPixelZ;
         const slabHeight = terrain.CONCRETE_SLAB_HEIGHT || 0.0762;
         const embeddedDepth = 0.02;
-        const centerX = (minX + maxX) / 2 / (sourceWidth - 1) * 1000 - 500;
-        const centerZ = (minY + maxY) / 2 / (sourceHeight - 1) * 1000 - 500;
-        const geometry = new THREE.PlaneGeometry(slabWidth, slabDepth, 32, 32);
-        const positions = geometry.attributes.position;
-        for (let i = 0; i < positions.count; i++) {
-            const worldX = positions.getX(i) + centerX;
-            const worldZ = positions.getY(i) + centerZ;
-            const baseY = terrain.getGroundHeightAt({ x: worldX, z: worldZ }, false);
-            positions.setZ(i, -(baseY + slabHeight));
+        const maskCenterX = (minX + maxX + 1) / 2;
+        const maskCenterY = (minY + maxY + 1) / 2;
+        const worldCenterX = (maskCenterX - 0.5) * (1000 / (sourceWidth - 1)) - 500;
+        const worldCenterZ = (maskCenterY - 0.5) * (1000 / (sourceHeight - 1)) - 500;
+        const positions = [];
+        const indices = [];
+        const surfaceVertexIndices = new Map();
+        const sideVertices = [];
+        const sideIndices = [];
+        const pixelWorldX = 1000 / (sourceWidth - 1);
+        const pixelWorldZ = 1000 / (sourceHeight - 1);
+        const terrainSegments = 256;
+        const terrainVertexHeights = new Float32Array((terrainSegments + 1) * (terrainSegments + 1));
+        for (let y = 0; y <= terrainSegments; y++) {
+            const mapY = Math.floor(y / terrainSegments * (terrain.canvas.height - 1));
+            for (let x = 0; x <= terrainSegments; x++) {
+                const mapX = Math.floor(x / terrainSegments * (terrain.canvas.width - 1));
+                const heightIndex = (mapY * terrain.canvas.width + mapX) * 4;
+                terrainVertexHeights[y * (terrainSegments + 1) + x] =
+                    terrain.heightData[heightIndex] / 255 * terrain.DISPLACEMENT + terrain.OFFSET;
+            }
         }
-        positions.needsUpdate = true;
+
+        const isSolidPixel = (x, y) => {
+            if (x < 0 || y < 0 || x >= sourceWidth || y >= sourceHeight) return false;
+            return terrain.concreteData[(y * sourceWidth + x) * 4 + 3] > 160;
+        };
+        const getWorldXZ = (gridX, gridY) => ({
+            x: worldCenterX + (gridX - maskCenterX) * pixelWorldX,
+            z: worldCenterZ + (gridY - maskCenterY) * pixelWorldZ
+        });
+        const getTerrainSurfaceHeight = (worldX, worldZ) => {
+            const gridX = THREE.MathUtils.clamp((worldX + 500) / 1000 * terrainSegments, 0, terrainSegments);
+            const gridY = THREE.MathUtils.clamp((worldZ + 500) / 1000 * terrainSegments, 0, terrainSegments);
+            const cellX = Math.min(Math.floor(gridX), terrainSegments - 1);
+            const cellY = Math.min(Math.floor(gridY), terrainSegments - 1);
+            const fractionX = gridX - cellX;
+            const fractionY = gridY - cellY;
+            const rowOffset = cellY * (terrainSegments + 1);
+            const heightA = terrainVertexHeights[rowOffset + cellX];
+            const heightB = terrainVertexHeights[rowOffset + cellX + terrainSegments + 1];
+            const heightC = terrainVertexHeights[rowOffset + cellX + terrainSegments + 2];
+            const heightD = terrainVertexHeights[rowOffset + cellX + 1];
+
+            if (fractionX + fractionY <= 1) {
+                return heightA +
+                    fractionX * (heightD - heightA) +
+                    fractionY * (heightB - heightA);
+            }
+            return (1 - fractionX) * heightB +
+                (fractionX + fractionY - 1) * heightC +
+                (1 - fractionY) * heightD;
+        };
+        const getGroundOverlayOffset = (world) =>
+            terrain.getGroundHeightAt(world, false) - terrain.getTerrainHeightAt(world);
+        const getSurfaceVertex = (gridX, gridY, isTop) => {
+            const key = `${isTop ? 'top' : 'bottom'}:${gridX}:${gridY}`;
+            if (surfaceVertexIndices.has(key)) return surfaceVertexIndices.get(key);
+
+            const world = getWorldXZ(gridX, gridY);
+            const groundY = getTerrainSurfaceHeight(world.x, world.z);
+            const vertexIndex = positions.length / 3;
+            positions.push(world.x, isTop
+                ? groundY + getGroundOverlayOffset(world) + slabHeight
+                : groundY - embeddedDepth, world.z);
+            surfaceVertexIndices.set(key, vertexIndex);
+            return vertexIndex;
+        };
+
+        const addSide = (gridAX, gridAY, gridBX, gridBY) => {
+            const worldA = getWorldXZ(gridAX, gridAY);
+            const worldB = getWorldXZ(gridBX, gridBY);
+            const groundA = getTerrainSurfaceHeight(worldA.x, worldA.z);
+            const groundB = getTerrainSurfaceHeight(worldB.x, worldB.z);
+            const topA = groundA + getGroundOverlayOffset(worldA) + slabHeight;
+            const topB = groundB + getGroundOverlayOffset(worldB) + slabHeight;
+            const firstVertex = sideVertices.length / 3;
+            sideVertices.push(
+                worldA.x, groundA - embeddedDepth, worldA.z,
+                worldB.x, groundB - embeddedDepth, worldB.z,
+                worldB.x, topB, worldB.z,
+                worldA.x, topA, worldA.z
+            );
+            sideIndices.push(
+                firstVertex, firstVertex + 1, firstVertex + 2,
+                firstVertex, firstVertex + 2, firstVertex + 3
+            );
+        };
+
+        for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
+            if (!isSolidPixel(x, y)) continue;
+            const topA = getSurfaceVertex(x, y, true);
+            const topB = getSurfaceVertex(x + 1, y, true);
+            const topC = getSurfaceVertex(x + 1, y + 1, true);
+            const topD = getSurfaceVertex(x, y + 1, true);
+            indices.push(topA, topD, topC, topA, topC, topB);
+
+            const bottomA = getSurfaceVertex(x, y, false);
+            const bottomB = getSurfaceVertex(x + 1, y, false);
+            const bottomC = getSurfaceVertex(x + 1, y + 1, false);
+            const bottomD = getSurfaceVertex(x, y + 1, false);
+            indices.push(bottomA, bottomB, bottomC, bottomA, bottomC, bottomD);
+
+            if (!isSolidPixel(x, y - 1)) addSide(x, y, x + 1, y);
+            if (!isSolidPixel(x, y + 1)) addSide(x, y + 1, x + 1, y + 1);
+            if (!isSolidPixel(x - 1, y)) addSide(x, y, x, y + 1);
+            if (!isSolidPixel(x + 1, y)) addSide(x + 1, y, x + 1, y + 1);
+        }
+
+        const allPositions = new Float32Array(positions.length + sideVertices.length);
+        allPositions.set(positions);
+        allPositions.set(sideVertices, positions.length);
+        const allIndices = new Uint32Array(indices.length + sideIndices.length);
+        allIndices.set(indices);
+        const sideIndexOffset = positions.length / 3;
+        for (let i = 0; i < sideIndices.length; i++) {
+            allIndices[indices.length + i] = sideIndices[i] + sideIndexOffset;
+        }
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.BufferAttribute(allPositions, 3));
+        geometry.setIndex(new THREE.BufferAttribute(allIndices, 1));
         geometry.computeVertexNormals();
 
         const material = new THREE.MeshStandardMaterial({
-            color: 0xffffff,
-            map: concreteTexture,
-            alphaMap,
-            alphaTest: 0.12,
-            roughness: 0.88,
-            metalness: 0.015,
-            bumpMap: concreteTexture,
-            bumpScale: 0.008,
-            side: THREE.DoubleSide,
-            polygonOffset: true,
-            polygonOffsetFactor: -1
+            color: 0x888888,
+            roughness: 0.95,
+            metalness: 0,
+            side: THREE.DoubleSide
         });
-        const overlay = new THREE.Mesh(geometry, material);
-        overlay.name = 'ConcreteSlabs';
-        overlay.rotation.x = Math.PI / 2;
-        overlay.castShadow = false;
-        overlay.receiveShadow = false;
-
-        // Build thin vertical faces around the mask boundary. Their bottoms
-        // tuck just below terrain while the top stands 3 inches proud.
-        const sidePositions = [];
-        const sideUvs = [];
-        const isSolidPixel = (x, y) => {
-            if (x < minX || y < minY || x > maxX || y > maxY) return false;
-            return terrain.concreteData[(y * sourceWidth + x) * 4 + 3] > 31;
-        };
-        const addSide = (ax, az, bx, bz) => {
-            const groundA = terrain.getGroundHeightAt({ x: ax, z: az }, false);
-            const groundB = terrain.getGroundHeightAt({ x: bx, z: bz }, false);
-            const a = [ax - centerX, az - centerZ, -(groundA - embeddedDepth)];
-            const b = [bx - centerX, bz - centerZ, -(groundB - embeddedDepth)];
-            const c = [bx - centerX, bz - centerZ, -(groundB + slabHeight)];
-            const d = [ax - centerX, az - centerZ, -(groundA + slabHeight)];
-            const uvA = [ax / 2.4, az / 2.4], uvB = [bx / 2.4, bz / 2.4];
-            for (const [vertex, uv] of [[a, uvA], [b, uvB], [c, uvB], [a, uvA], [c, uvB], [d, uvA]]) {
-                sidePositions.push(...vertex);
-                sideUvs.push(...uv);
-            }
-        };
-        for (let y = minY; y <= maxY; y++) for (let x = minX; x <= maxX; x++) {
-            if (!isSolidPixel(x, y)) continue;
-            const x0 = x - 0.5, x1 = x + 0.5, z0 = y - 0.5, z1 = y + 0.5;
-            const wx0 = x0 / (sourceWidth - 1) * 1000 - 500;
-            const wx1 = x1 / (sourceWidth - 1) * 1000 - 500;
-            const wz0 = z0 / (sourceHeight - 1) * 1000 - 500;
-            const wz1 = z1 / (sourceHeight - 1) * 1000 - 500;
-            if (!isSolidPixel(x, y - 1)) addSide(wx0, wz0, wx1, wz0);
-            if (!isSolidPixel(x, y + 1)) addSide(wx0, wz1, wx1, wz1);
-            if (!isSolidPixel(x - 1, y)) addSide(wx0, wz0, wx0, wz1);
-            if (!isSolidPixel(x + 1, y)) addSide(wx1, wz0, wx1, wz1);
-        }
-        const slabGroup = new THREE.Group();
-        slabGroup.name = 'ConcreteSlabs';
-        slabGroup.position.set(centerX, 0, centerZ);
-        slabGroup.add(overlay);
-        if (sidePositions.length) {
-            const sideGeometry = new THREE.BufferGeometry();
-            sideGeometry.setAttribute('position', new THREE.Float32BufferAttribute(sidePositions, 3));
-            sideGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(sideUvs, 2));
-            sideGeometry.computeVertexNormals();
-            const sideMaterial = new THREE.MeshStandardMaterial({
-                color: 0xb8b9b7,
-                map: concreteTexture,
-                roughness: 0.9,
-                metalness: 0.01,
-                side: THREE.DoubleSide
-            });
-            const sides = new THREE.Mesh(sideGeometry, sideMaterial);
-            sides.name = 'ConcreteSlabEdges';
-            sides.rotation.x = Math.PI / 2;
-            sides.castShadow = false;
-            sides.receiveShadow = false;
-            sides.userData.noCollision = true;
-            slabGroup.add(sides);
-        }
-        overlay.userData.noCollision = true;
-        this.scene.add(slabGroup);
-        window.concreteOverlay = slabGroup;
-        console.log('✅ Terrain-following concrete slabs added');
+        const sidewalk = new THREE.Mesh(geometry, material);
+        sidewalk.name = 'ConcreteSlabs';
+        sidewalk.castShadow = false;
+        sidewalk.receiveShadow = false;
+        sidewalk.userData.noCollision = true;
+        this.scene.add(sidewalk);
+        window.concreteOverlay = sidewalk;
+        console.log('✅ Solid gray concrete sidewalks added');
     }
 
     createBuildingOverlay(onBuildingsCreated) {
@@ -890,4 +879,3 @@ export class EnvironmentManager {
         }
     }
 }
-

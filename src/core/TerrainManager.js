@@ -15,6 +15,7 @@ class TerrainManager {
         this.buildingsData = null;
         this.treesData = null;
         this.concreteData = null;
+        this.parkingLinesData = null;
 
         // Canvas and context variables for texture decoding
         this.canvas = document.createElement('canvas');
@@ -24,12 +25,14 @@ class TerrainManager {
         this.buildingsCanvas = document.createElement('canvas');
         this.treesCanvas = document.createElement('canvas');
         this.concreteCanvas = document.createElement('canvas');
+        this.parkingLinesCanvas = document.createElement('canvas');
 
         // References to generated Three.js textures
         this.roadTexture = null;
         this.roadMaskTexture = null;
         this.asphaltTexture = null;
         this.beachTexture = null;
+        this.parkingLinesTexture = null;
 
         this.isTerrainLoaded = false;
     }
@@ -175,6 +178,81 @@ class TerrainManager {
         console.log('✅ Roads texture applied from TerrainManager');
     }
 
+    setupParkingLines(texture) {
+        const img = texture.image;
+        if (!img || img.width === 0) {
+            img.onload = () => this.setupParkingLines(texture);
+            return;
+        }
+
+        this.parkingLinesCanvas.width = img.width;
+        this.parkingLinesCanvas.height = img.height;
+        const context = this.parkingLinesCanvas.getContext('2d', { willReadFrequently: true });
+        context.clearRect(0, 0, img.width, img.height);
+        context.drawImage(img, 0, 0);
+        this.parkingLinesData = context.getImageData(0, 0, img.width, img.height).data;
+
+        const paintMask = context.createImageData(img.width, img.height);
+        for (let i = 0; i < this.parkingLinesData.length; i += 4) {
+            const brightness = Math.round(
+                (this.parkingLinesData[i] + this.parkingLinesData[i + 1] + this.parkingLinesData[i + 2]) / 3 *
+                this.parkingLinesData[i + 3] / 255
+            );
+            paintMask.data[i] = brightness;
+            paintMask.data[i + 1] = brightness;
+            paintMask.data[i + 2] = brightness;
+            paintMask.data[i + 3] = 255;
+        }
+        context.putImageData(paintMask, 0, 0);
+        this.parkingLinesTexture = new THREE.CanvasTexture(this.parkingLinesCanvas);
+        this.parkingLinesTexture.flipY = false;
+        this.parkingLinesTexture.needsUpdate = true;
+
+        if (window.roadMesh) {
+            this.applyParkingLinesTexture(window.roadMesh);
+        }
+        console.log(`Parking-line mask loaded: ${img.width}x${img.height}`);
+    }
+
+    applyParkingLinesTexture(roadMesh) {
+        if (!this.parkingLinesTexture || !roadMesh.parent) return;
+
+        if (window.parkingLinesMesh) {
+            if (window.parkingLinesMesh.parent) {
+                window.parkingLinesMesh.parent.remove(window.parkingLinesMesh);
+            }
+            window.parkingLinesMesh.geometry.dispose();
+            window.parkingLinesMesh.material.dispose();
+        }
+
+        const geometry = roadMesh.geometry.clone();
+        const positions = geometry.attributes.position;
+        for (let i = 0; i < positions.count; i++) {
+            positions.setZ(i, positions.getZ(i) - 0.02);
+        }
+        positions.needsUpdate = true;
+
+        const material = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            alphaMap: this.parkingLinesTexture,
+            transparent: true,
+            alphaTest: 0.25,
+            depthWrite: false,
+            side: THREE.DoubleSide
+        });
+        const parkingLinesMesh = new THREE.Mesh(geometry, material);
+        parkingLinesMesh.name = 'ParkingLines';
+        parkingLinesMesh.userData.noCollision = true;
+        parkingLinesMesh.position.copy(roadMesh.position);
+        parkingLinesMesh.rotation.copy(roadMesh.rotation);
+        parkingLinesMesh.scale.copy(roadMesh.scale);
+        parkingLinesMesh.renderOrder = roadMesh.renderOrder + 1;
+        parkingLinesMesh.castShadow = false;
+        parkingLinesMesh.receiveShadow = false;
+        roadMesh.parent.add(parkingLinesMesh);
+        window.parkingLinesMesh = parkingLinesMesh;
+    }
+
     setupBeach(texture) {
         const img = texture.image;
         if (!img || img.width === 0) {
@@ -256,9 +334,13 @@ class TerrainManager {
         const ctx = this.concreteCanvas.getContext('2d', { willReadFrequently: true });
         ctx.clearRect(0, 0, img.width, img.height);
         ctx.drawImage(img, 0, 0);
-        // Keep the mask alpha unchanged: its strokes are the slab footprints.
-        // The visible rise and edge faces add thickness without widening them.
         this.concreteData = ctx.getImageData(0, 0, img.width, img.height).data;
+        // The mask uses white RGB for concrete and black for everything else.
+        // Convert brightness to alpha so geometry and ground checks share one mask.
+        for (let i = 0; i < this.concreteData.length; i += 4) {
+            const brightness = (this.concreteData[i] + this.concreteData[i + 1] + this.concreteData[i + 2]) / 3;
+            this.concreteData[i + 3] = Math.round(this.concreteData[i + 3] * brightness / 255);
+        }
         console.log(`Concrete mask loaded: ${img.width}x${img.height}`);
     }
 
