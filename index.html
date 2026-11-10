@@ -731,12 +731,6 @@
                     isDescendant(child, window.buildingGroup) ||
                     isDescendant(child, window.treeGroup)) return;
 
-                // Exclude the vehicle and all of its child meshes from colliders list
-                if (window.vehicleManager && window.vehicleManager.vehicle) {
-                    if (child === window.vehicleManager.vehicle || isDescendant(child, window.vehicleManager.vehicle)) {
-                        return;
-                    }
-                }
                 if (window.jetSkiManager && window.jetSkiManager.vehicle) {
                     if (child === window.jetSkiManager.vehicle || isDescendant(child, window.jetSkiManager.vehicle)) {
                         return;

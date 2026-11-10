@@ -205,7 +205,7 @@ export class VehicleManager {
                 soundManager.loadUTVSounds();
             });
             
-            // Re-index global collision objects list to ensure this vehicle mesh is correctly filtered out
+            // Re-index global collision objects so the capsule can collide with the UTV.
             if (typeof window.refreshCollisionObjects === 'function') {
                 window.refreshCollisionObjects();
             }
